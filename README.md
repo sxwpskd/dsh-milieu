@@ -8,10 +8,39 @@
 
 1. **检查三个库在不在**（认知 / 工具 / 外部信息），不在就补目录——只建目录，不铺内容。
 2. **把协议写进工作区**：`AGENTS.md` 里一个托管段（`<!-- dsh-milieu:begin … -->` … `<!-- dsh-milieu:end -->`）+ `.dsh-milieu/` 下的三份协议文件（定义 / 建议 / 原因）。
-3. **保证这个工作区有一条已经读过的预加载会话**：没有就建一条并让它真读一次；已有但空白就补读。（代码默认 `preloadSession: false`；本机补丁层 2026-10-18 已打开，**真机验证通过**。）
+3. **保证这个工作区有一条已经读过的预加载会话**（**默认关闭**）：打开 `preloadSession` 后，没有就建一条并让它真读一次；已有但空白就补读。
 4. **把工作区那一页状态**（`<认知库>/STATE.md`）注入。
 
 界面半边：切进一条会话时读状态文件，按判据决定弹不弹「这个工作区变了，要不要重读」的卡片；点「重读」就发一条「读一遍并说明变化」的请求。
+
+## 安装（GitHub）
+
+在 DSH 里：**插件管理器 → 安装 → 填 GitHub 地址**：
+
+```
+github:sxwpskd/dsh-milieu
+```
+
+要钉死版本（推荐）：
+
+```
+github:sxwpskd/dsh-milieu#9351b002030809f854f38cf50994434b8ce8b523
+```
+
+装完**完全退出 DSH，再打开**。第一次安装由 pnpm 拉 GitHub 仓库，可能需要几十秒。
+
+> 只需要 DSH **0.2.x**（`>=0.2.0-0 <0.3.0`）。本包零依赖；不装 Node 以外的东西。
+
+## 它会写你工作区的什么
+
+只碰这四处：
+
+- `AGENTS.md`：**只维护** `<!-- dsh-milieu:begin … -->` 到 `<!-- dsh-milieu:end -->` 之间；段外一个字不动；
+- `.dsh-milieu/`：协议三份（DEFINITION / SUGGESTIONS / RATIONALE）+ `preload.json` 诊断；
+- 三个库目录（`review/` `tools/` `external/`）：**缺就建目录，不铺内容**；
+- 认知库里的 `STATE.md`：缺就建**状态页骨架**；只重写 `<!-- judgement -->` 以下的材料段。
+
+**卸载不会自动清理这些**（插件管理器移除后，工作区文件还在）。第二期会补清理。
 
 ## 为什么协议写文件而不是注入提示词
 
@@ -38,7 +67,7 @@
 | `state-page.js` | **注入页的材料段**（纯模块）：启动时重写 `<!-- judgement -->` 以下的材料（变更账 / 三库 / 最近改动 / 受管会话）；**判断段一字不动**，没有标记的页面不碰，内容没变就不写；**首装没有页面时建骨架**（`ensureStatePage`） | 干跑实测 + `index-injection-test` |
 | `changes.js` | **变更台账的纯函数**：条目表组装（认知库逐文件 / 其它库一级 / 索引文件 / 排除目录整棵）、比差量出事件、有界、**投影**（六桶与计数的唯一算法）、机制自产物排除表 | 同上 |
 | `views.js` | **两种变更视图**（纯）：会话 **30 天内用过** → 文件名 + 大小变化（旧→新 + 净变化）；**超过 30 天** → 认知库只给文件名（最多 20 条，超过写「改动过大」）、其它库只给两个索引文件。接在「重读」的请求文本里 | 随动作自测 |
-| `plugin-dryrun.mjs` | 包内干跑脚本（假 ctx）：注册了什么、注到了什么、会不会重发 | `node dsh-milieu/plugin/plugin-dryrun.mjs` |
+| `plugin-dryrun.mjs` | 包内干跑脚本（假 ctx）：注册了什么、注到了什么、会不会重发 | `node plugin-dryrun.mjs` |
 | `session.js` | **预加载会话的身份与选项组装**（纯）：`mintSessionId()`（`session-<uuid>`，格式照平台）、`buildAgentCreateOptions()`、`findPreloadSession()` | 纯函数，随 `milieu-session` 工具离线可看 |
 | `preload-session.js` | **建预加载会话的动作**：先查认知库门槛 → 解析工作区 id → `create({workspaceId})` → 取消归档 → **`prompt` 发阅读**；空白补读、用过的旧会话转 active 再建新的；每步写诊断文件 | **真机验证通过（2026-10-18）；门槛为离线验证** |
 | `DEFINITION.md` | **定义层原文**（主人声明，不可改）。被 `protocol.js` 写进工作区 | 原文未改一字 |
@@ -52,7 +81,7 @@
 | `client.js` | **客户端半边（源码，ES 模块）**：盯当前会话（含它的最后活动时间）→ 读状态文件 → 判据 → 挂卡片 → 三种收场 → 点「重读」**真的发出去** | **接线 46 项** |
 | `lib/client.js` | **界面半边的打包产物**（**生成物，别手改**）：平台按**普通脚本**加载界面插件（ES 模块会报 `Cannot use import statement outside a module`）。改界面源码后跑 `node tools/build-client.mjs` | 自检：无 import/export、能注册、能 apply |
 
-**八套离线测试合计约 428 项，全过**（`tools/*-selftest.mjs`、`tools/client-wiring-test.mjs`、`tools/index-injection-test.mjs`；本包自己那两套 = `protocol-selftest` 66 + `index-injection-test` 48）。**一个入口**：`node tools/run-tests.mjs`。
+**开发工作区里有八套离线测试（约 428 项，全过）**——不随包发布；入口 `node tools/run-tests.mjs`。本包自己那两套 = `protocol-selftest` 66 + `index-injection-test` 48。
 
 **状态机说明**：变更台账的规则见包内 `changes.js` / `state.js`；工作区协作面另有一份 `dsh-milieu/CHANGE-STATE-MACHINE.md`（**不随包发布**）。
 
@@ -103,7 +132,7 @@ sessionController.prompt({ sessionId, content })       // ⑤ 真读一次（平
 3. **`remote.workspaceFiles.read` 的返回** —— ✅ 实测是 `{ ok: true, value: { … } }`，代码已拆包装（journal/044）。
 4. **卡片 + 「重读」** —— ✅ 真机通过：卡片出现、点"重读"收到带变更视图的请求。
 5. **预加载会话“用过后毕业”** —— ✅ 真机可见：正在用的那条已转 `active`；新建会被 readiness 门槛拦下（真实工作区的认知库还不满 10 文件 / 10 KB）。
-6. **工作区定位（2026-10-19）** —— 空 `workspaceRoot` 时问平台 `workspaceRegistry`：只有一个工作区就用它；多个时用平台顺序里的第一个（日志会报出用的是哪一个）。**下次重启验证真机行为**。
+6. **工作区定位（2026-10-19）** —— 空 `workspaceRoot` 时问平台 `workspaceRegistry`：只有一个工作区就用它；多个时用平台顺序里的第一个（日志会报出用的是哪一个）。**已重启验证**：配置为空、根解析到 `D:\DSH`；但本包没有持久日志，`（registry）` 那行看不到。
 
 ## 依据
 
@@ -180,25 +209,24 @@ sessionController.prompt({ sessionId, content })       // ⑤ 真读一次（平
 4. **超预算不硬塞**：超过 `injectBudgetKiB` 就跳过，**不静默截断**。
 5. **写入面很窄**：只写协议托管段、`.dsh-milieu/`（协议三份 + 诊断文件）、认知库里的 `milieu-state.json` 与 `STATE.md` 材料段；不碰用户其它内容。
 
-## 怎么装（**要主人点头**）
+## 开发：从源码安装
 
-官方规范明确：**不要手写 profile 的 `package.json` / `cordis.patch.yml`，不要在 profile 目录跑 pnpm**——装要走 `plugin_manager` 的 `install_bundle`，`target` 指向**本目录的绝对路径**：
+改源码时用**本地目录**装（官方 `install_bundle`，`target` 指向本仓库根目录的绝对路径，也就是 `package.json` 所在处）：
 
 ```
-D:\DSH\dsh-milieu\plugin
+D:\你的路径\dsh-milieu
 ```
 
-装完后：**桌面版要完全退出应用再打开**（宿主侧改动才生效）；界面改动才是即时生效。`link` 安装，改源码重启即生效，不用重装。
+装完**完全退出 DSH，再打开**。`link` 安装，改源码重启即生效，不用重装。
 
-## 状态
+官方规范：**不要手写 profile 的 `package.json` / `cordis.patch.yml`，不要在 profile 目录跑 pnpm**——装交给插件管理器。
 
-- **已安装、已激活**（2026-10-18）。`fiberPhase: active`。
-- **预加载会话链路真机验证通过**（2026-10-18）：
-  - `preload.json`：`step: "adopt+attach"`、`workspaceId` 有值、`unarchive: {ok:true}`、`blank:true`、`didRead:true`；
-  - 会话出现在侧栏；标题由平台的 **LLM 标题提供方**生成（**不是第一行时间**——2026-10-18 确认）。
-- **卡片 + 「重读」：离线测过，真机未验**（见「还没验证的」第 4 条）。
-- **阅读请求只走 `sessionController.prompt`**：不再手写消息（手写会缺 id、写坏会话）。
-- **旧预加载会话会被“毕业”**：已经被人用过的 `role: preload` 会话转成 `active`，插件再新建一条干净的预加载。
+## 状态（作者本机，2026-10-18/19）
+
+- 已安装、已激活；协议写入、状态页注入、预加载会话、卡片 + 「重读」都在真机跑通。
+- **阅读请求只走 `sessionController.prompt`**：不手写消息（手写会缺 id、写坏会话）。
+- 旧预加载会话会“毕业”：被人用过的 `role: preload` 转 `active`，插件再新建一条。
+- 详细验证记录在开发工作区的 `journal/` 里（不随包发布）。
 
 ## 平台契约与踩坑
 
