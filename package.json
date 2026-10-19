@@ -2,6 +2,11 @@
   "name": "dsh-milieu",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sxwpskd/dsh-milieu.git"
+  },
   "description": "给 agent 一套环境的定义与账目：环境 = 信息 + 工具；三个库（认知 / 工具 / 外部信息）由它自己管。含协议规范框架、工作区状态预加载、定期整理。",
   "type": "module",
   "main": "index.js",
@@ -33,7 +38,8 @@
     "DEFINITION.md",
     "SUGGESTIONS.md",
     "RATIONALE.md",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
@@ -57,7 +63,7 @@
   "comment": {
     "naming": "包名 dsh-milieu 即 bundle 名，与仓库/工作区主题一致；npm 上此名未被占用（2026-10-13 实测）。",
     "peer": "照 dsh-plugin-guide / dsh-automation 的写法声明宿主范围；具体矩阵待 Q8 定案后收窄。",
-    "private": "阶段 C 只在本机验证，暂不发 npm；发布时去掉 private 并补 license/repository。",
+    "private": "仍留 private：只走 GitHub 安装，暂不发 npm；要发 npm 时去掉它（license/repository 已补）。",
     "version": "0.1.0：状态文件形状变了（lastReadAt 标量 → managedSessions 表，stateVersion 1 → 2），按 CONVENTION 第四节升 minor。",
     "files": "白名单 = 包里到底有什么（CONVENTION.md 第四节）。包内只许有包自己的东西：代码 + 补丁层 + 三层文档 + README。",
     "engines": "同时允许 Node 22 与 24——官方静态检查（manifest-engines）要求，2026-10-14 实测。",

@@ -231,3 +231,7 @@ D:\你的路径\dsh-milieu
 ## 平台契约与踩坑
 
 见工作区的 `field-notes/dsh-plugin-dev.md`（**不随包发布**）。那份记的是 `journal/023`、`028`–`040` 里踩出来的平台契约：`Config` / `inject` / `agentLoop` / 挂工作区 / v4 来源 / 打包形态。
+
+## License
+
+MIT。见 [LICENSE](LICENSE)。
