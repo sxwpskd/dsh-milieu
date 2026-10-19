@@ -47,16 +47,23 @@
 
 ## 安装
 
-在 DSH 里：**插件管理器 → 安装 → 填 GitHub 地址**：
+**从 npm（推荐）**
+
+```
+dsh plugin --profile desktop add dsh-milieu
+```
+
+web 版把 `desktop` 换成 `web`。也可以在 DSH 里：插件管理器 → 安装 → 填 `dsh-milieu`。
+
+**从 GitHub**
 
 ```
 github:sxwpskd/dsh-milieu
 ```
 
-装完**完全退出 DSH，再打开**。第一次安装由 pnpm 拉 GitHub 仓库，可能需要几十秒。
+想钉版本：在仓库的 commit 页面复制 SHA，写成 `github:sxwpskd/dsh-milieu#<sha>`。
 
-- 需要 DSH **0.2.x**（`>=0.2.0-0 <0.3.0`）；本包零依赖，不装 Node 以外的东西。
-- 想钉死版本：在仓库的 commit 页面复制 SHA，写成 `github:sxwpskd/dsh-milieu#<sha>`。
+装完**完全退出 DSH，再打开**。需要 DSH **0.2.x**（含 0.2.1 预发布）；本包零依赖。
 
 ### 装好后的建议
 
