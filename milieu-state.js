@@ -21,6 +21,9 @@ const DEFAULT_LIBS = { review: 'review', tools: 'tools', external: 'external' };
 const PREV_VERSION = 2;
 export const PREV_FILE = '.milieu-state-prev.json';
 
+/** 扫描时跳过的目录：与工作区工具 `inventory` 的 `SKIP_DIRS` 保持一致。 */
+const SCAN_SKIP_DIRS = new Set(['.git', 'node_modules', '.dsh']);
+
 /** 读工作区配置（坏文件用默认值，不抛）。 */
 export function loadWorkspaceConfig(root) {
   const p = join(root, CFG_NAME);
@@ -45,7 +48,7 @@ export function fileFingerprint(file) {
   catch { return null; }                       // 读不到：当作"指纹未知"，下轮再判
 }
 
-/** 从清单里读"现在有什么"（清单只给人看，这里只取事实）。 */
+/** 从清单里读"现在有什么"（**只供人工/迁移**；生成状态已改为 `listWorkspaceFiles` 直接扫）。 */
 export function readManifestFiles(toolsDir) {
   const p = join(toolsDir, 'manifest.md');
   if (!existsSync(p)) return null;
@@ -54,6 +57,45 @@ export function readManifestFiles(toolsDir) {
   const re = /^\| `([^`]+)` \| (\d+) \| ([^|]+) \| `([^`]+)` \|$/gm;
   let m;
   while ((m = re.exec(txt))) out.push({ rel: m[1], size: Number(m[2]) });
+  return out;
+}
+
+/**
+ * **直接扫工作区**（不依赖 `tools/manifest.md`）。
+ *
+ * 2026-10-19 修：状态生成曾经读清单当文件表，清单不在就直接放弃——于是**全新工作区没有清单，
+ * 状态文件永远生不出来**（客户端也就永远不弹"重读"）。可清单只是给人看的报告（`changes.js` 第 9 行
+ * 早就写着"不参与判定"），这里按同一套扫描规则自己走一遍：
+ *   · 认知库全递归、其它库只到一级（由 `buildEntries` 折）；
+ *   · `aggregateOnly` 子树**不进去**，只在下游记整棵合计；
+ *   · 跳过版本库/依赖/平台目录（与工作区工具 `inventory` 的 `SKIP_DIRS` 一致）。
+ *
+ * @param {string} root 工作区根
+ * @param {object} cfg  含 `aggregateOnly`
+ * @returns {Array<{rel:string}>} 相对路径（`/` 分隔，不含被排除子树里的文件）
+ */
+export function listWorkspaceFiles(root, cfg = {}) {
+  const aggregateOnly = (cfg.aggregateOnly || [])
+    .map((s) => String(s).replace(/\\/g, '/').replace(/\/+$/, ''))
+    .filter(Boolean);
+  const isAggregated = (rel) => aggregateOnly.some((x) => rel === x || rel.startsWith(x + '/'));
+  const out = [];
+  const walk = (dir, relDir) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const rel = relDir ? relDir + '/' + e.name : e.name;
+      const full = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (SCAN_SKIP_DIRS.has(e.name)) continue;
+        if (isAggregated(rel)) continue;   // 只记整棵合计，不列子文件
+        walk(full, rel);
+      } else {
+        out.push({ rel });
+      }
+    }
+  };
+  walk(root, '');
   return out;
 }
 
@@ -110,12 +152,13 @@ export function generateState(o = {}) {
   const statePath = join(root, libs.review, STATE_FILE);
   const prevPath = join(root, libs.tools, PREV_FILE);
 
-  const manifestFiles = readManifestFiles(join(root, libs.tools));
-  if (!manifestFiles) return { ...empty, reason: '清单不存在：先跑 inventory（tools/manifest.md）', libs: libPaths };
+  // ① 文件表**直接扫**（不再依赖 `tools/manifest.md`——它只是给人看的报告）。
+  //    旧实现在没有清单时直接放弃，导致全新工作区永远不生状态文件、客户端永远不提示重读。
+  const fileList = listWorkspaceFiles(root, cfg);
 
-  // ① 每个文件的 mtime（毫秒，取整）与指纹：**现读文件系统**，不经过清单里那段分钟文本
+  // 每个文件的 mtime（毫秒，取整）与指纹：**现读文件系统**，不经过任何缓存文本
   const files = [];
-  for (const f of manifestFiles) {
+  for (const f of fileList) {
     const full = join(root, f.rel);
     let st = null;
     try { st = statSync(full); } catch { continue; }   // 清单有、盘上没了：跳过（下轮会算成 gone）

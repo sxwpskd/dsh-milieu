@@ -235,6 +235,10 @@ function syncProtocolToWorkspace(ctx, cfg, root) {
 function refreshStateFile(ctx, cfg, root) {
   try {
     if (!root) return { ok: false, reason: '没有工作区根' };
+    // `ensureLibs=false` 时不许为了写状态文件去造认知库目录（R3 的配置边界）。
+    if (cfg.ensureLibs === false && !existsSync(join(root, cfg.libs.review))) {
+      return { ok: false, reason: '认知库目录不在（ensureLibs=false）' };
+    }
     const report = generateState({ root, now: Date.now(), criteria: cfg.criteria });
     if (!report.ok) {
       const log = ctx.logger;
