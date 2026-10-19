@@ -8,6 +8,7 @@
     "url": "git+https://github.com/sxwpskd/dsh-milieu.git"
   },
   "description": "给 agent 一套环境的定义与账目：环境 = 信息 + 工具；三个库（认知 / 工具 / 外部信息）由它自己管。含协议规范框架、工作区状态预加载、定期整理。",
+  "keywords": ["dsh-plugin", "dsh", "agi", "agent-memory", "workspace", "protocol", "cognition"],
   "type": "module",
   "main": "index.js",
   "exports": {
