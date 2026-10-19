@@ -1,0 +1,80 @@
+# dsh-milieu 的 profile 补丁层。
+#
+# 这里 insert 我们的插件行。`config` 是**用户可改**的那一份——按官方要求，
+# 会随部署变化的值（三个库的路径）一律走 Config，不写死在代码里。
+#
+# 注意（官方规范）：
+#   · 覆盖某个已存在的行会**整体替换**它的 config，所以覆盖时要重述想保留的字段；
+#   · 本文件为空或只有注释会导致启动失败——要禁用这层请写 `[]`。
+- insert:
+    - id: milieu
+      name: dsh-milieu
+      config:
+        # 三个库的**默认名**（约定大于配置）。改成别的名字只需改这里。
+        libs:
+          review: review
+          tools: tools
+          external: external
+        # 工作区状态那一页的相对路径（认知库内）。
+        statePath: STATE.md
+        # 是否在会话开场把工作区状态那一页作为提示段注入。默认开。
+        injectState: true
+        # 注入预算（KiB）。照 dsh-plugin-tool-management 的 128 KiB 惯例。
+        injectBudgetKiB: 128
+        # 是否**把协议写进工作区**（`AGENTS.md` 的托管段 + `.dsh-milieu/` 三份协议文件）。默认开。
+        # 这是"让后续 AI 看得到协议"那一条的实现：**声源是工作区文件，不是提示词注入**——
+        # 用户自己建的会话不归我们管，我们不会给它注入任何东西，但那份协议它照样读得到。
+        # 写失败只报告，不搞兜底机制。
+        writeProtocol: true
+        # 检查三个库在不在，**不在就补全目录**（需求 R3）。默认开。
+        # 只建目录，**不铺任何内容**（README / 骨架是 tools/milieu-init.js 的活，用于"第一次把工作区初始化好"）。
+        ensureLibs: true
+        # 两段请求文本（预加载 / 重读）——**配置层**。
+        # 默认值写在代码里（`texts.js` 的 `DEFAULT_TEXTS`），这里不重复；
+        # 要换文本，走宿主侧注入（函数不能经 YAML 传）。
+        # **工作区根：发布默认留空** —— 让插件问平台的 `workspaceRegistry`：
+        #   只有一个工作区就用它；多个时先看 cwd 命中，否则用平台顺序里的第一个（日志会报出用的是哪一个）。
+        #   **不能把本机路径带进发布包**（别人机器上没有 `D:\DSH`）。
+        #   要固定到某个工作区，就在用户 profile 的配置里覆盖这一项。
+        workspaceRoot: ''
+        # 是否**建预加载会话**（需求 R4）：工作区没有我们的预加载会话就建一条，并让它真读一次。
+        # **一次配置、之后自动**（主人 2026-10-18 定）：不是"每次点一下"，是打开这个开关后每次启动自己检查。
+        # 实现：**等 `agentLoop` 服务就绪（`ctx.inject`）再建**——AgentLoop 构造时才注册工厂，
+        #   我们早于它就会撞上 `no agent factory registered`（真机崩过一次，已按此修正）。
+        # **发布默认关**：它会真跑一次 agent（花钱、动会话列表）；本机验证时开过，发布包不带这个状态。
+        preloadSession: false
+        # **判据与显示阈值**：默认值在 `criteria.js`；这里可覆盖。
+        # 宿主把**生效值**写进 `milieu-state.json` 的 `criteria`，客户端读同一份（两半不许各写一份）。
+        criteria:
+          # 新增/消失几个就重读；改动几个就重读
+          structuralThreshold: 1
+          contentThreshold: 5
+          # 距上次阅读超过这么多天 → 只提示，不重读
+          staleHintDays: 30
+          # 距这条会话最后活动 ≥ 5 分钟才弹卡
+          promptThresholdMs: 300000
+          # 认知库"建立完成"的门槛（evaluateReadiness）
+          readiness:
+            minFiles: 10
+            minBytes: 10240
+            windowMs: 300000
+            maxGrowthRate: 0.30
+            maxChangedRatio: 0.20
+          # 会话指纹保留：最近 1 天 ∪ 最近 5 条
+          fingerprint:
+            keepDays: 1
+            keepRecent: 5
+          # 事件流有界：最近 30 天 ∪ 最近 500 条
+          eventKeepDays: 30
+          eventKeepCount: 500
+          # 超过 30 天没用 → 只给文件名；认知库最多列 20 条
+          staleDays: 30
+          staleMaxReview: 20
+          # 客户端：记忆上限 / 轮询间隔 / 读状态超时
+          clientMemoryLimit: 20
+          pollMs: 2000
+          readTimeoutMs: 4000
+          # 客户端诊断行（排查用，平时关）
+          debug: false
+          # 宿主：等 agentLoop 的兜底尝试
+          agentLoopWaitMs: 10000
