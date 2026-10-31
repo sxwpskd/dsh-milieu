@@ -1,7 +1,7 @@
 // dsh-milieu —— **变更视图**（纯函数：事件流 → 一段给人/给 AI 看的文字）
 //
 // 它回答一个具体问题：**这条会话该看到的"变了什么"，详细到什么程度？**
-// 规则照 [dsh-milieu/CHANGE-STATE-MACHINE.md](../../dsh-milieu/CHANGE-STATE-MACHINE.md) §六：
+// 规则照 [dsh-milieu/CHANGE-STATE-MACHINE.md](../../../dsh-milieu/CHANGE-STATE-MACHINE.md) §六：
 //
 //   · 会话**30 天以内**用过 → **视图 A**：文件名 + 大小变化（旧→新 + 净变化）
 //   · 会话**超过 30 天**没用 → **视图 B**：认知库**只给文件名**（最多 20 条，超过整段不列，写"改动过大"）；
@@ -10,13 +10,13 @@
 // 口径（主人 2026-10-16 定的，别改）：**过滤基准是这条会话自己的活动时间**——
 //   在用会话时不打扰（用户看得见的变化，AI 自然也接受）；搁置久了才给全貌。
 //
-// 它**不判断该不该重读**（那是 core.js 的判据），只负责"该看什么就摆成什么样"。
+// 它**不判断该不该重读**（那是 `core/criteria.js` 的判据），只负责"该看什么就摆成什么样"。
 import { CHANGE_DEFAULTS } from './changes.js';
-import { DEFAULT_CRITERIA } from './criteria.js';
+import { DEFAULT_CRITERIA } from '../config/criteria.js';
 
-/** 超过这么久没用 → 只给文件名（默认值在 criteria.js）。 */
+/** 超过这么久没用 → 只给文件名（默认值在 config/criteria.js）。 */
 export const STALE_DAYS = DEFAULT_CRITERIA.staleDays;
-/** 视图 B 里认知库最多列几条；超过就整段不列（默认值在 criteria.js）。 */
+/** 视图 B 里认知库最多列几条；超过就整段不列（默认值在 config/criteria.js）。 */
 export const STALE_MAX_REVIEW = DEFAULT_CRITERIA.staleMaxReview;
 
 const MS_PER_DAY = 86400000;

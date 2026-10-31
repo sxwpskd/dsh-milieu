@@ -1,4 +1,4 @@
-// dsh-milieu —— 请求文本拼装（**纯模块** + **配置层**：无宿主依赖、无副作用、双方都能引）
+// dsh-milieu —— 请求文本拼装（**纯模块** + **配置层默认值**：无宿主依赖、无副作用、双方都能引）
 //
 // 为什么单独一个文件：这段文本有两个作者——
 //   · **客户端**点"重读"时，用 `session/prompt` Remote 把它发进会话；
@@ -12,9 +12,9 @@
 //   所以：**第一行 = 时间**，用户一眼能看出这条会话是什么时候起的。
 //
 // 文本内容属**配置层**（主人 2026-10-14 定）：默认值在这里，可在插件的 `Config.texts` 里整体替换。
-import { buildChangeIndexPrompt } from './core.js';
+import { buildChangeIndexPrompt } from './criteria.js';
 import { renderChangeView } from './views.js';
-import { DEFAULT_CRITERIA } from './criteria.js';
+import { DEFAULT_CRITERIA } from '../config/criteria.js';
 
 /** 来源标记：**只给日志与调试用**（进消息的来源字段，不再写进正文——正文会被拿去做标题）。 */
 export const PRELOAD_SOURCE = 'dsh-milieu:preload';

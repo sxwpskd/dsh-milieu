@@ -1,6 +1,6 @@
 // dsh-milieu —— **变更台账**（纯函数：扫描结果的组装、事件流的产出与投影）
 //
-// 它照 [dsh-milieu/CHANGE-STATE-MACHINE.md](../../dsh-milieu/CHANGE-STATE-MACHINE.md) v2 写。一句话：
+// 它照 [dsh-milieu/CHANGE-STATE-MACHINE.md](../../../dsh-milieu/CHANGE-STATE-MACHINE.md) v2 写。一句话：
 //   **把"工作区里哪些东西、什么时候、变了多少"记成一条有界的事件流；六个桶与计数是它的投影。**
 //
 // 分工（不要混）：
@@ -10,13 +10,12 @@
 //
 // 扫描范围（规范）：**认知库全递归**（每个文件一条）；**其它库只到一级**（文件夹按整棵求和、顶层文件按自身）；
 // 索引文件单独成条；`aggregateOnly` 里的目录只记整棵合计。
-import { createHash } from 'node:crypto';
-import { DEFAULT_CRITERIA } from './criteria.js';
+import { DEFAULT_CRITERIA } from '../config/criteria.js';
 
 /** 事件类型。 */
 export const KINDS = ['created', 'changed', 'gone'];
 
-/** 默认参数（都可被配置覆盖；数值的单一来源是 criteria.js）。 */
+/** 默认参数（都可被配置覆盖；数值的单一来源是 config/criteria.js）。 */
 export const CHANGE_DEFAULTS = {
   keepDays: DEFAULT_CRITERIA.eventKeepDays,
   keepCount: DEFAULT_CRITERIA.eventKeepCount,
@@ -39,9 +38,26 @@ export const SELF_ARTIFACTS = [
   { lib: 'tools', name: '.milieu-state-prev.json' },
 ];
 
+/**
+ * **宿主日志文件**（LOG-SCHEMA §6.3）：`.dsh-milieu/milieu.log` 与轮转文件（`.1` / `.2`…）
+ * 也是机制自己的产物，**必须排除出事件流**——否则每写一条日志都变成一次"工作区变了"，自己喂自己。
+ *
+ * 为什么这里写字面量而不 import `log/file-sink.js`：分层不允许 `core/` 依赖 `log/`；
+ * 路径契约在 LOG-SCHEMA §6.1 里是同一份（写方 file-sink、排除方这里）。
+ */
+export const LOG_ARTIFACT_REL = '.dsh-milieu/milieu.log';
+
+/** 这个路径是不是日志文件（本体或轮转备份）。 */
+function isLogArtifact(rel) {
+  if (!rel.startsWith(LOG_ARTIFACT_REL)) return false;
+  const rest = rel.slice(LOG_ARTIFACT_REL.length);
+  return rest === '' || /^\.\d+$/.test(rest); // milieu.log / milieu.log.1 / milieu.log.2 …
+}
+
 /** 这个相对路径是不是机制自己的产物？ */
 export function isSelfArtifact(rel, libs = { review: 'review', tools: 'tools' }) {
   const p = String(rel || '').replace(/\\/g, '/');
+  if (isLogArtifact(p)) return true;
   return SELF_ARTIFACTS.some((a) => p === (libs[a.lib] || a.lib) + '/' + a.name);
 }
 
@@ -171,9 +187,4 @@ export function project(events, libs = { review: 'review' }) {
     counts[k.count] += 1;
   }
   return { changeIndex, counts };
-}
-
-/** 指纹（与清单同一算法：sha256 前 12）。 */
-export function fpOf(text) {
-  return createHash('sha256').update(text).digest('hex').slice(0, 12);
 }

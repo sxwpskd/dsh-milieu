@@ -1,15 +1,15 @@
 // dsh-milieu —— 客户端判据（纯函数，无副作用，可离线测）
 //
 // 它只回答一件事：**这张卡该不该弹。**
-// 阈值判据**复用 core.js 的 `shouldPromptOnReturn`**——判断只能有一处，这里不另写一份。
+// 阈值判据**复用 `core/criteria.js` 的 `shouldPromptOnReturn`**——判断只能有一处，这里不另写一份。
 //
 // 不在这里做的事（各归各处）：
-//   · 算变更 → 宿主（要读文件系统），结果落在 state.js 描述的状态文件里；
-//   · 画界面 → card.js；
-//   · 读文件 → client.js（用现成的 workspaceFiles Remote）。
-import { shouldPromptOnReturn, evaluateInvalidation, PROMPT_THRESHOLD_MS, normalizeChangeIndex } from './core.js';
-import { parseState, hasChanges, changeTotals, managedIds } from './state.js';
-import { DEFAULT_CRITERIA } from './criteria.js';
+//   · 算变更 → 宿主（要读文件系统），结果落在 `model/state.js` 描述的状态文件里；
+//   · 画界面 → `ui/card.js`；
+//   · 读文件 → `client.js`（用现成的 workspaceFiles Remote）。
+import { shouldPromptOnReturn, evaluateInvalidation, PROMPT_THRESHOLD_MS, normalizeChangeIndex } from '../core/criteria.js';
+import { parseState, hasChanges, changeTotals, managedIds } from '../core/state.js';
+import { DEFAULT_CRITERIA } from '../config/criteria.js';
 
 /** 客户端自己记的"这条会话弹过了"（**只活在页面里**，不进工作区）。 */
 export const CLIENT_MEMORY_LIMIT = DEFAULT_CRITERIA.clientMemoryLimit;
@@ -42,9 +42,9 @@ const NO = (reason) => ({ show: false, reason });
  *   ② **这一轮已经弹过就不弹**（"只提示一次"）；
  *   ③ 工作区**确实变了**（没变就"什么都没有"）；
  *   ④ 变化**够不够大**：结构（新增+消失）≥ `structuralThreshold`，或内容（改动）≥ `contentThreshold`；
- *   ⑤ **距这条会话最后活动 ≥ `promptThresholdMs`**（core.js 的 `shouldPromptOnReturn`）。
+ *   ⑤ **距这条会话最后活动 ≥ `promptThresholdMs`**（core/criteria.js 的 `shouldPromptOnReturn`）。
  *
- * 第 ④ 关就是“重读阈值”的另一半：**不只是时间，还要变化数量够**。
+ * 第 ④ 关就是"重读阈值"的另一半：**不只是时间，还要变化数量够**。
  * 第 ⑤ 关的基准是**这条会话自己的活动时间**（平台会话列表里的"最后更新时间"），
  * **不是**我们另记的"上次读"。理由（主人 2026-10-16，收成判据）：
  *   **只在用会话，改动基本可以忽略**——用户在使用中能接受的改动，AI 自然也能接受；
@@ -79,7 +79,7 @@ export function shouldShowCard(currentSessionId, stateText, memory, opts = {}) {
   // ④ 没变就什么都没有
   if (!hasChanges(state.changeIndex)) return NO('工作区没有变化');
 
-  // ⑤ 变化够不够大：先用 normalizeChangeIndex **归一**，再交给 core.js 的判据。
+  // ⑤ 变化够不够大：先用 normalizeChangeIndex **归一**，再交给 core/criteria.js 的判据。
   //    这一步曾经漏掉过——两套字段名让"有变化"变成了"没变化"，自测当场抓住。
   const flat = normalizeChangeIndex(state.changeIndex);
   const inv = evaluateInvalidation(flat, null, criteria);

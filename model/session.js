@@ -5,18 +5,18 @@
 //   ② 建会话/建 agent 要喂什么 → `buildAgentCreateOptions()` / `buildSessionCreateRequest()`
 //
 // **不在这里做的事**：不调 `ctx.agents.create`、不读文件、不发消息——
-// 那些是动作（`./preload-session.js` 与宿主 `index.js`），判据与组装必须能脱离宿主验。
+// 那些是动作（`../preload-session.js` 与宿主 `../index.js`），判据与组装必须能脱离宿主验。
 //
 // 契约的两个要点（照抄平台，不发明）：
-//   · `SessionId` 是**纯编译期品牌**（`Branded<'SessionId'>`）；`@deepseek-ai/dsh-brand` 的
-//     `brandString(v)` 实现就是 `return value`——所以**不引依赖**，直接给字符串，格式照平台：
-//     `session-<uuid>`（平台自己在 `session-controller` 的 `create()`/`fork()` 里就是这么造的）。
-//   · `ctx.agents.create({ sessionId, meta: { cwd }, agentOptions: {} })`：
+//   · `SessionId` 是**纯编译期品牌**（`Branded<'SessionId'>`）；官方 `brandString(v)` 的实现
+//     就是 `return value`——所以**不引依赖**，直接给字符串，格式照平台：
+//     `session-<uuid>`（平台自己的会话接口建会话/派生会话时就是这么造的）。
+//   · 建 agent 的入参是 `{ sessionId, meta: { cwd }, agentOptions: {} }`：
 //     `meta.cwd` 是**工作区根**（"fresh-session workspace metadata"）；
 //     `agentOptions` 留空 = 用平台默认模型（我们**不指定模型**，那是用户/平台的事）。
 import { randomUUID } from 'node:crypto';
 
-/** 平台自己的会话 id 前缀（见 `session-controller` 的 create/fork）。 */
+/** 平台自己的会话 id 前缀（平台会话接口建的 id 就是这个形状）。 */
 export const SESSION_ID_PREFIX = 'session-';
 
 /**
@@ -31,6 +31,24 @@ export function mintSessionId(uuid) {
 /** 像不像一个能用的会话 id（我们自己造的 + 平台造的都要认）。 */
 export function looksLikeSessionId(id) {
   return typeof id === 'string' && id.length > 8 && !/\s/.test(id);
+}
+
+/**
+ * 生成一个请求 id（`session/prompt` 需要）。
+ * **不 import 宿主的 id 工具**（那会引入依赖）；用平台普遍可用的 `crypto.randomUUID`，
+ * 没有就退到一个"时间 + 随机"的可用值。**id 的语义是"标识这次请求"，格式不重要。**
+ *
+ * 说明（跨任务决定，2026-10-30）：本函数原样复制自 `actions.js`；B 的 `core/preload.js`
+ * 与 C 的 `ui/remote.js` 都从这里引，保证"请求 id 只有一个家"。旧 `actions.js` 里的那份
+ * 由 C 迁移时改为引用本文件。
+ */
+export function makeRequestId() {
+  try {
+    if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+      return globalThis.crypto.randomUUID();
+    }
+  } catch { /* 没有就算了 */ }
+  return 'milieu-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
 }
 
 /**
@@ -56,7 +74,7 @@ export function buildAgentCreateOptions(o = {}) {
 }
 
 /**
- * 平台面那条路（Remote `sessionController.create`）的入参。
+ * 平台面那条路（Remote 的会话 create）的入参。
  * **注意**：`workspaceId` 与 `cwd` **只能给一个**（两个都给，平台会报 `gateway/bad-request`）。
  */
 export function buildSessionCreateRequest(o = {}) {

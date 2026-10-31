@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// plugin-dryrun —— 喂一个假 ctx，干跑 `./index.js` 的宿主半边
+// dryrun —— 喂一个假 ctx，干跑 `../index.js` 的宿主半边
 //
-// 它住在**包内**（`plugin/`），因为宿主在真机上要干跑的就是这个包里的 `index.js`；
+// 它住在**包内**（`plugin/tools/`），因为宿主在真机上要干跑的就是这个包里的 `index.js`；
 // 而"能导入 ≠ 能用"这条判据要求：**只有观察到的能力才算成功**。
 // 工作区里那份 `tools/plugin-dryrun.mjs` 会转调它（开发时的工作台）。
 //
-// 用法：node plugin/plugin-dryrun.mjs [工作区根]
-import { apply, DEFAULT_CONFIG } from './index.js';
+// 用法：node tools/dryrun.mjs [工作区根]
+import { apply } from '../index.js';
+import { DEFAULT_CONFIG } from '../config/defaults.js';
 
 const root = process.argv[2] || process.cwd();
 const events = [];

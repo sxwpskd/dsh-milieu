@@ -1,4 +1,4 @@
-// dsh-milieu —— 把协议放进工作区（宿主半边的**唯一写动作**）
+// dsh-milieu —— 协议文本与同步流程（核心层：不 import 'node:fs'，读写走能力对象）
 //
 // 为什么要有这一步（主人 2026-10-14 定的形态）：
 //   用户可能自己在某个工作区建会话——**那条会话不由我们管**，我们不会给它注入任何东西。
@@ -10,46 +10,41 @@
 //      —— 只维护标记之间那段，**段外一字不动**；
 //   2. `<root>/.dsh-milieu/` 下的三个协议文件：定义层 / 建议层 / 原因层，各带**指纹头**。
 //
+// 分工（ARCHITECTURE.md §6.3）：
+//   · 版本、指纹、头部格式 → `protocol/version.js`（纯策略）；
+//   · 标记常量、协议文件名 → `constant/protocol.js`；
+//   · 文件读写 → 通过参数传入的 `fs` 能力（`adapter/fs.js` 的实现），本文件不 import 'node:fs'。
+//
 // 纪律：
 //   · **幂等**：内容没变就一个字节都不写（指纹与源一致即跳过）；
 //   · **失败要报告**：返回 `{ok:false, reason}`，**不做兜底**（主人定的：不搞兜底机制）；
 //   · **不删东西**：只创建与更新自己声明的范围。
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
+import { END, PROTO_VERSION, PROTOCOL_FILES } from '../constant/protocol.js';
+import { beginMark, beginHeader, protocolHeader, fingerprint } from '../protocol/version.js';
+import { fail } from '../exception/result.js';
+import { normalizeError } from '../exception/normalize.js';
+import { CODES } from '../exception/codes.js';
 
+// **源文件在包根**（DEFINITION.md / SUGGESTIONS.md / RATIONALE.md）。
+// 本文件原来住在包根，搬进 core/ 后 HERE 少了一层——这里**上溯到包根**再拼源路径，
+// 否则"读不到协议源文件"，整个协议同步都会失败（重构时最容易静默坏掉的一处）。
 const HERE = dirname(fileURLToPath(import.meta.url));
-
-/** 托管段的标记。**改标记 = 换一份新协议**，不要随手改。 */
-export const BEGIN = '<!-- dsh-milieu:begin';
-export const END = '<!-- dsh-milieu:end -->';
-/** 协议层版本：写进托管段与协议文件的指纹头里。 */
-export const PROTO_VERSION = 'v1';
+const PACKAGE_DIR = resolve(HERE, '..');
 
 /**
- * **真正的标记** = `BEGIN` + 空格 + 版本。
- *
+ * **真正的标记** = `BEGIN` + 空格 + 版本（`constant` 与 `version` 各管一半，这里合成一处）。
  * 为什么不能只拿 `BEGIN` 去找（2026-10-14 我拿自己的 `AGENTS.md` 试出来的教训）：
- * 说明文字里**原样提到标记**（比如"一段以 dsh-milieu:begin 开头"或抄一个示例）是完全正常的，
- * 而只按 `BEGIN` 找，就会**从说明里那个标记开始整段替换**——把用户中间的内容整段吃掉。
- * **这是我亲手咬的自己一口**：把中间两节（边界、尚未确立）吃掉了。
+ *   说明文字里**原样提到标记**是完全正常的；只按 `BEGIN` 找，就会从说明里那个标记开始整段替换，
+ *   把用户中间的内容整段吃掉。所以只认"完整标记 + 版本"。
  */
-const BEGIN_MARK = BEGIN + ' ' + PROTO_VERSION;
-
-/** 协议文件清单：源（插件包内）→ 目标（工作区内）。 */
-export const PROTOCOL_FILES = [
-  ['DEFINITION.md', 'DEFINITION.md', '定义层（不可改）'],
-  ['SUGGESTIONS.md', 'SUGGESTIONS.md', '建议层（可调）'],
-  ['RATIONALE.md', 'RATIONALE.md', '原因层（为什么）'],
-];
-
-const fp = (text) => createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 12);
+const BEGIN_MARK = beginMark({ version: PROTO_VERSION });
 
 /** 带上指纹头的文件内容：**重复写同一个 pid 时内容逐字节相同**，所以能幂等。 */
 export function withFingerprint(text, pid) {
   return [
-    '<!-- dsh-milieu:protocol v1 · fp:' + pid + ' · 这份是插件放的，可以读；改了会在下次会话开场被写回 -->',
+    protocolHeader({ fp: pid }),
     '',
     text.replace(/\s*$/, ''),
     '',
@@ -59,10 +54,10 @@ export function withFingerprint(text, pid) {
 /** 托管段正文：定义原文（逐字）+ 指针。 */
 export function composeProtocolBlock(definition, pid) {
   return [
-    BEGIN_MARK + ' · fp:' + pid + ' -->',
+    beginHeader({ version: PROTO_VERSION, fp: pid }),
     '## 环境的定义（dsh-milieu 协议 · 不可改）',
     '',
-    '以下三条是**定义**，不是建议：它是这套框架的根。它被放在这里，是为了让**读这个工作区的任何 AI**都看得见。',
+    '以下三条是**定义**，不是建议：它是这套框架的根。它被放在这里，是为了让**读这个工作区的任何 AI** 都看得见。',
     '可调的做法见 `.dsh-milieu/SUGGESTIONS.md`；为什么这么定见 `.dsh-milieu/RATIONALE.md`。',
     '',
     definition.replace(/\s*$/, ''),
@@ -78,29 +73,31 @@ export function composeProtocolBlock(definition, pid) {
  */
 export function upsertBlock(fileText, block) {
   const text = String(fileText ?? '');
-  const i = text.indexOf(BEGIN_MARK);
-  if (i >= 0) {
-    const e = text.indexOf(END);
-    if (e < 0) {
+  const begin = text.indexOf(BEGIN_MARK);
+  if (begin >= 0) {
+    const end = text.indexOf(END);
+    if (end < 0) {
       // 只有头没有尾：不可信的半截状态 → 从头起整段换掉，并在原地说明
-      return { text: text.slice(0, i).replace(/\s*$/, '') + '\n\n' + block + '\n', changed: true, hadBlock: true };
+      return { text: text.slice(0, begin).replace(/\s*$/, '') + '\n\n' + block + '\n', changed: true, hadBlock: true };
     }
-    const old = text.slice(i, e + END.length);
+    const old = text.slice(begin, end + END.length);
     if (old === block) return { text, changed: false, hadBlock: true };
-    return { text: text.slice(0, i) + block + text.slice(e + END.length), changed: true, hadBlock: true };
+    return { text: text.slice(0, begin) + block + text.slice(end + END.length), changed: true, hadBlock: true };
   }
   const sep = text.trim() ? '\n\n' : '';
   return { text: text.replace(/\s*$/, '') + sep + block + '\n', changed: true, hadBlock: false };
 }
 
-/** 读插件包内的协议源文件；读不到 → 抛出（由调用方转成"说清被什么挡的"）。 */
-export function readSources(o = {}) {
-  const { exists = existsSync, readFile = (p) => readFileSync(p, 'utf8') } = o;
+/**
+ * 读插件包内的协议源文件；读不到 → 抛出（由调用方转成"说清被什么挡的"）。
+ * @param {{exists:Function, readText:Function}} fs 文件系统能力（只需要这两项）
+ */
+export function readSources({ exists, readText } = {}) {
   const sources = {};
-  for (const [src, pid, what] of PROTOCOL_FILES) {
-    const p = join(HERE, src);
-    if (!exists(p)) throw new Error('插件包里缺少 ' + src + '（' + what + '）');
-    sources[src] = readFile(p);
+  for (const [src, , what] of PROTOCOL_FILES) {
+    const path = join(PACKAGE_DIR, src);
+    if (!exists(path)) throw new Error('插件包里缺少 ' + src + '（' + what + '）');
+    sources[src] = readText(path);
   }
   return sources;
 }
@@ -112,8 +109,8 @@ export function readSources(o = {}) {
  *   · root       工作区根（已解析过的绝对路径）
  *   · libs       三个库的名字
  *   · ensureLibs 要不要补全三个库的**目录**（默认 true，主人的需求 R3）
- *   · exists/readFile/writeFile/mkdir 注入点（离线测用；默认 node:fs）
- *   · now
+ *   · fs         文件系统能力（`adapter/fs.js` 的 `createFs()`；本层不 import 'node:fs'）
+ *   · now        保留给以后（当前写入内容不依赖时间，保持幂等）
  * @returns {{ok:boolean, reason:string, wrote:string[], changed:boolean, checked:number, libsCreated:string[]}}
  */
 export function syncProtocol(o = {}) {
@@ -121,24 +118,24 @@ export function syncProtocol(o = {}) {
     root,
     libs = { review: 'review', tools: 'tools', external: 'external' },
     ensureLibs = true,
-    exists = existsSync,
-    readFile = (p) => readFileSync(p, 'utf8'),
-    writeFile = (p, t) => writeFileSync(p, t, 'utf8'),
-    mkdir = (p) => mkdirSync(p, { recursive: true }),
+    fs = null,
   } = o;
 
   const empty = { wrote: [], changed: false, checked: 0, libsCreated: [] };
-  if (!root) return { ok: false, reason: '没有工作区根（拿不到 cwd 也没配置 workspaceRoot）', ...empty };
+  if (!root) return { ...fail('没有工作区根（拿不到 cwd 也没配置 workspaceRoot）', 'config', CODES.CONFIG_INVALID), ...empty };
+  if (!fs) return { ...fail('没有文件系统能力（fs），不能同步协议', 'fs', CODES.FS_UNAVAILABLE), ...empty };
 
   let sources;
   try {
-    sources = readSources({ exists, readFile });
+    sources = readSources({ exists: fs.exists, readText: fs.readText });
   } catch (err) {
-    return { ok: false, reason: String((err && err.message) || err), ...empty };
+    // 写入边界（task-5）：异常归一成带错误码的失败结果；**reason 文案不变**。
+    const failure = normalizeError(err, { code: CODES.PROTOCOL_SOURCE_MISSING, blockedBy: 'fs' });
+    return { ...failure, ...empty };
   }
 
   const definition = sources['DEFINITION.md'];
-  const pid = fp(definition);
+  const pid = fingerprint(definition);
   const block = composeProtocolBlock(definition, pid);
   const wrote = [];
   const libsCreated = [];
@@ -151,8 +148,8 @@ export function syncProtocol(o = {}) {
         const name = libs[key];
         if (!name) continue;
         const abs = join(root, name);
-        if (exists(abs)) continue;
-        mkdir(abs);
+        if (fs.exists(abs)) continue;
+        fs.mkdirp(abs);
         wrote.push(name + '/');
         libsCreated.push(name);
         changed = true;
@@ -161,14 +158,16 @@ export function syncProtocol(o = {}) {
 
     // ② 三个协议文件 → <root>/.dsh-milieu/
     const dir = join(root, '.dsh-milieu');
-    if (!exists(dir)) mkdir(dir);
+    if (!fs.exists(dir)) fs.mkdirp(dir);
     for (const [src, name] of PROTOCOL_FILES) {
       const target = join(dir, name);
       const want = withFingerprint(sources[src], pid);
       let have = null;
-      if (exists(target)) { try { have = readFile(target); } catch { have = null; } }
-      if (have === want) continue;                       // 幂等：一模一样就不写
-      writeFile(target, want);
+      if (fs.exists(target)) {
+        try { have = fs.readText(target); } catch { have = null; }
+      }
+      if (have === want) continue; // 幂等：一模一样就不写
+      fs.writeText(target, want);
       wrote.push('.dsh-milieu/' + name);
       changed = true;
     }
@@ -176,15 +175,24 @@ export function syncProtocol(o = {}) {
     // ③ AGENTS.md 的托管段
     const agents = join(root, 'AGENTS.md');
     let text = '';
-    if (exists(agents)) { try { text = readFile(agents); } catch (err) { return { ok: false, reason: 'AGENTS.md 读不开：' + String((err && err.message) || err), wrote, changed, checked: 0, libsCreated }; } }
+    if (fs.exists(agents)) {
+      try {
+        text = fs.readText(agents);
+      } catch (err) {
+        const failure = normalizeError(err, { code: CODES.FS_READ_FAILED, blockedBy: 'fs' });
+        return { ...failure, reason: 'AGENTS.md 读不开：' + failure.reason, wrote, changed, checked: 0, libsCreated };
+      }
+    }
     const up = upsertBlock(text, block);
     if (up.changed) {
-      writeFile(agents, up.text);
+      fs.writeText(agents, up.text);
       wrote.push('AGENTS.md' + (up.hadBlock ? '（更新托管段）' : '（新增托管段）'));
       changed = true;
     }
   } catch (err) {
-    return { ok: false, reason: '写入失败：' + String((err && err.message) || err), wrote, changed, checked: 0, libsCreated };
+    // 写入边界（task-5）：失败带稳定错误码；**reason 文案不变**。
+    const failure = normalizeError(err, { code: CODES.PROTOCOL_WRITE_FAILED, blockedBy: 'fs' });
+    return { ...failure, reason: '写入失败：' + failure.reason, wrote, changed, checked: 0, libsCreated };
   }
 
   return {
@@ -201,12 +209,6 @@ export function syncProtocol(o = {}) {
 
 /** 只为离线测与报告：托管段现在是不是"最新的那一版"。 */
 export function isBlockCurrent(agentsText, definition) {
-  const pid = fp(definition);
+  const pid = fingerprint(definition);
   return String(agentsText ?? '').includes(BEGIN_MARK + ' · fp:' + pid + ' -->');
-}
-
-/** 顺带用一下 statSync，免得它被静态检查当成未使用（也让将来"版本变了"的判断有处可落）。 */
-export function agentsMtime(root) {
-  const p = join(String(root || ''), 'AGENTS.md');
-  try { return statSync(p).mtimeMs; } catch { return null; }
 }

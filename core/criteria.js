@@ -9,17 +9,18 @@
 // 理由：这三问是**判据**，不是**动作**。判据必须能脱离宿主反复验证——
 // 否则每次改判据都要真装一次包才能知道对不对。
 //
-// 设计依据（见 ../DEVELOPMENT.md 阶段 B）：
+// 设计依据（见 ../../DEVELOPMENT.md 阶段 B）：
 //   · 过期条件是"工作区状态变了"，**不是时间**（主人 2026-10-13 纠正）；
 //   · 正常路径下状态不会背着会话偷偷变——因为按规范，改工作区就该走会话；
 //   · 但仍然要检测，**为了在规范被绕过时有人叫**（274→382 行、三个孤儿文件都是那么来的）。
 
-import { DEFAULT_CRITERIA } from './criteria.js';
+import { DEFAULT_CRITERIA } from '../config/criteria.js';
+import { workspaceKey } from '../utils/path.js';
 
 /** 判据版本：判据本身变了要能看出来（旧记录按旧判据写的）。 */
 export const CRITERIA_VERSION = 2;   // v2：自愈改按"缓存失效"定义；新增认知库完备性门槛
 
-/** 缺省阈值（**默认值在 criteria.js**；这里导出同一份，供判据函数直接引用）。 */
+/** 缺省阈值（**默认值在 config/criteria.js**；这里导出同一份，供判据函数直接引用）。 */
 export const DEFAULT_SETTINGS = {
   // 结构性变化（新增/消失）达到几个就重读
   structuralThreshold: DEFAULT_CRITERIA.structuralThreshold,
@@ -294,12 +295,6 @@ export function markThresholdReached(checkpoints, reachedAt, sessionAt, fingerpr
   cp.lastThresholdAt = reachedAt;
   cp.fingerprints = fps;
   return cp;
-}
-
-/** 工作区身份：同一个 cwd 就是同一个工作区（插件拿不到 workspaceId，只拿得到 cwd）。 */export function workspaceKey(cwd) {
-  if (typeof cwd !== 'string' || !cwd) return null;
-  // 统一分隔符与大小写：Windows 上 D:\DSH 与 d:/dsh 是同一个地方
-  return cwd.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
 /**

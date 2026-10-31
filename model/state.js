@@ -1,17 +1,16 @@
-// dsh-milieu —— 状态文件（宿主写、客户端读的**唯一一份材料**）
+// dsh-milieu —— 状态文件的**形状与归一**（纯模块：不判断业务、不解析文本、不读写文件）
 //
 // 为什么要有这个文件：判据只能有一处。宿主算变更（要读文件系统），客户端只显示。
 // 位置：`<认知库>/milieu-state.json`
-// 作者：**宿主**（由 tools/milieu-state.mjs 生成）。**客户端只读它，绝不写。**
-// 依赖：**只依赖 `changes.js`**（六个桶与计数由事件流派生）——判据与目录都不在这里重写。
-import { project } from './changes.js';
-import { DEFAULT_CRITERIA, mergeCriteria } from './criteria.js';
+// 作者：**宿主**（由 `milieu-state.js` 生成）。**客户端只读它，绝不写。**
+// 依赖：只有 `constant/state.js`——形状与常量不在这里之外再造一份。
+import { STATE_VERSION, ROLES } from '../constant/state.js';
 
 // 形状（版本化：变了就升 stateVersion，旧的按旧的读）：
 // {
 //   "stateVersion": 3,
 //   "generatedAt": 1791800000000,
-//   "workspaceKey": "d:/dsh",
+//   "workspaceKey": "d:/work",
 //   "libs": { "review": "review", "tools": "tools", "external": "external" },
 //   "managedSessions": [ { "sessionId": "…", "role": "preload", "source": "preload" } ],
 //   "events": [ { "path": "review/a.md", "kind": "changed", "time": 1791700000000,
@@ -23,19 +22,20 @@ import { DEFAULT_CRITERIA, mergeCriteria } from './criteria.js';
 //
 // **为什么事件流是唯一源头**（2026-10-16 主人定）：六个桶与计数也描述"变了什么"，
 //   若各算各的，同一个"变了 5 个"会有两处说法，而且**不一致时不报错**。
-//   所以：events 是事实，changeIndex / counts 是它的**投影**——只允许一处算法（`changes.js` 的 `project()`）。
+//   所以：events 是事实，changeIndex / counts 是它的**投影**——只允许一处算法（`core/changes.js` 的 `project()`）。
 //
 // **名单丢了会失忆**（主人定：不兜底）：这张表是我们自己写在工作区里的账，
 //   它没了就认不回自己的会话；不做"扫标题/扫 cwd 重新认领"的兜底。
 
-export const STATE_FILE = 'milieu-state.json';
-export const STATE_VERSION = 3;
-
-/** 受管会话的角色（先留这两种；将来有别的再加）。 */
-export const ROLES = ['preload', 'active'];
-
-/** 造一个空状态（宿主还没写过时用它）。 */
-export function emptyState(now = Date.now()) {
+/**
+ * 造一个空状态（宿主还没写过时用它）。
+ *
+ * `criteria` 由调用方传进来（**本层不 import config/**）：宿主/解析层把生效判据叠进来；
+ * 拿不到时留空对象——读的人会再用 `mergeCriteria(DEFAULT_CRITERIA, …)` 兜底。
+ * @param {number} [now] 生成时间（毫秒）
+ * @param {object} [criteria] 生效判据（形状见 `config/criteria.js`）
+ */
+export function emptyState(now = Date.now(), criteria = {}) {
   return {
     stateVersion: STATE_VERSION,
     generatedAt: now,
@@ -47,7 +47,7 @@ export function emptyState(now = Date.now()) {
     changeIndex: { reviewAdded: [], reviewChanged: [], reviewGone: [], otherAdded: [], otherChanged: [], otherGone: [] },
     counts: { added: 0, changed: 0, gone: 0 },
     // **生效的判据阈值**：宿主写、客户端读。客户端拿它弹卡/选视图，不再各写一份默认值。
-    criteria: mergeCriteria(DEFAULT_CRITERIA),
+    criteria: criteria && typeof criteria === 'object' && !Array.isArray(criteria) ? { ...criteria } : {},
   };
 }
 
@@ -93,63 +93,4 @@ export function normalizeManagedSessions(list) {
     else { at.set(id, out.length); out.push(entry); }
   }
   return out;
-}
-
-/**
- * 解析客户端读到的文本。**任何异常都返回 null，不抛**——
- * 客户端读到一个坏文件时，正确行为是"什么都别弹"，不是把页面搞崩。
- */
-export function parseState(text) {
-  if (typeof text !== 'string' || !text.trim()) return null;
-  let raw;
-  try { raw = JSON.parse(text); } catch { return null; }
-  if (!raw || typeof raw !== 'object') return null;
-  if (raw.stateVersion !== STATE_VERSION) return null;   // 版本不认识 → 当没有
-  const empty = emptyState();
-  const events = normalizeEvents(raw.events);
-  // **六个桶与计数由事件流派生**——不接受文件里自带的那份（同一件事只许一处算法）。
-  const derived = project(events, { ...empty.libs, ...(raw.libs || {}) });
-  return {
-    ...empty,
-    ...raw,
-    libs: { ...empty.libs, ...(raw.libs || {}) },
-    managedSessions: normalizeManagedSessions(raw.managedSessions),
-    events,
-    archived: typeof raw.archived === 'number' && raw.archived > 0 ? raw.archived : 0,
-    changeIndex: derived.changeIndex,
-    counts: derived.counts,
-    criteria: mergeCriteria(DEFAULT_CRITERIA, raw.criteria),
-  };
-}
-
-/** 受管会话的 id 列表（"这条会话归不归我们管"用的就是它）。 */
-export function managedIds(state) {
-  return (state && Array.isArray(state.managedSessions) ? state.managedSessions : []).map((e) => e.sessionId);
-}
-
-/** 这条会话归不归我们管。 */
-export function isManaged(state, sessionId) {
-  return managedIds(state).includes(sessionId);
-}
-
-/** 这个变更索引里到底有没有东西（客户端判断"要不要弹"的第一道关）。 */
-export function hasChanges(changeIndex) {
-  if (!changeIndex || typeof changeIndex !== 'object') return false;
-  for (const v of Object.values(changeIndex)) if (Array.isArray(v) && v.length) return true;
-  return false;
-}
-
-/**
- * **注意：变更索引的"归一"只有一个家在 `core.js`**（`normalizeChangeIndex`）。
- * 这里原来也有一份，属于"同一件事两个版本"——已被删掉。
- * 需要归一的地方**从 core.js 引**，别在这儿重新发明。
- */
-
-/** 汇总成给人看的计数（卡片标题用）。 */
-export function changeTotals(changeIndex) {
-  const n = (v) => (Array.isArray(v) ? v.length : 0);
-  const ci = changeIndex || {};
-  const review = n(ci.reviewAdded) + n(ci.reviewChanged) + n(ci.reviewGone);
-  const other = n(ci.otherAdded) + n(ci.otherChanged) + n(ci.otherGone);
-  return { review, other, total: review + other };
 }

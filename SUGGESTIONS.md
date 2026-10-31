@@ -1,13 +1,13 @@
 # 建议层 · 可以怎么做
 
 > **这一层没有"必须"。** 里面全是可调的做法与默认值：因地制宜地改。
-> 定义层讲"什么为真"（[plugin/DEFINITION.md](plugin/DEFINITION.md)，不可改）；原因层讲"为什么"（[RATIONALE.md](RATIONALE.md)）。
+> 定义层讲"什么为真"（[DEFINITION.md](DEFINITION.md)，不可改）；原因层讲"为什么"（[RATIONALE.md](RATIONALE.md)）。
 > **改这里之前先问一句"这么改会连带改掉谁"**——每一条下面都写了它连着哪个工具、哪个判据。
 
 ## 1 · 三个库叫什么名字
 
 **默认**：`review`（认知库） / `tools`（工具区） / `external`（外部信息区）。
-**改法**：工作区根的 [`.dsh-milieu.json`](../.dsh-milieu.json) 里 `libs` 三个键；集成层里由插件的 `Config` 覆盖。
+**改法**：工作区根的 [`.dsh-milieu.json`](../../../.dsh-milieu.json) 里 `libs` 三个键；集成层里由插件的 `Config` 覆盖。
 **连着谁**：`tools/inventory.js`（扫谁）、`tools/summary.js`（写哪一页）、`tools/milieu-state.mjs`（差量怎么分库）、插件客户端（读哪个路径）。
 **改错的形状**：改成别的名字而工具没跟上 → **静默失灵**（不是报错）。所以改完要重跑一次 `inventory.js` + `summary.js` 看数对不对。
 
@@ -21,12 +21,12 @@
 
 **默认**：**工作区确实变了 且 距上次读 ≥ 5 分钟**；时间本身永远不是过期理由。
 **另外两条**：结构变了（新增 / 消失）达 **1** 个就算够大；纯改动要达 **5** 个。
-**连着谁**：`plugin/core.js` 的 `shouldPromptOnReturn` / `evaluateInvalidation`；插件客户端判据 `client-core.js`。
+**连着谁**：`plugin/core/criteria.js` 的 `shouldPromptOnReturn` / `evaluateInvalidation`；插件客户端判据 `plugin/ui/card-criteria.js`。
 **注意**：弹卡判据与阈值判据**用的是两套标准**（一个有变化就弹、一个要够大才推进）——这是已知的不一致，改之前先决定它俩要不要合并。
 
 ## 4 · 两段请求文本怎么写（预加载 / 重读）
 
-**默认**：写在代码里（`texts.js` 的 `DEFAULT_TEXTS`）——**它是配置层**，可以整体替换（宿主侧注入 `Config.texts`）。
+**默认**：写在代码里（`core/texts.js` 的 `DEFAULT_TEXTS`）——**它是配置层**，可以整体替换（宿主侧注入 `Config.texts`）。
 **两条写法上的约定**（主人 2026-10-14 定）：
 
 - **第一行是时间**（ISO 时刻）。理由：平台拿"第一条人类消息的前几个词"当**会话标题**，
@@ -36,23 +36,23 @@
 - **正文里不放身份前缀**：会话识别只看 `sessionId`（名单丢了不兜底），所以前缀没有识别用途，
   只会落在标题开头变成噪声。
 
-**连着谁**：`plugin/texts.js`（默认值）、`plugin/actions.js` 与 `plugin/client.js`（谁传 `templates`）。
+**连着谁**：`plugin/core/texts.js`（默认值）、`plugin/ui/remote.js` 与 `plugin/ui/plugin.js`（谁传 `templates`）。
 
 ## 5 · 注入多大算超
 
 **默认**：`injectBudgetKiB: 128`，**超了就跳过，不静默截断**。
 **去重**：按文件 mtime + 字节数做指纹，没变不重发。
-**连着谁**：插件宿主半边 `index.js` 的 `composeSection`。
+**连着谁**：插件宿主半边 `core/boot.js` 的 `composeSection`。
 
 ## 6 · 变更索引怎么分档
 
 **默认**：认知库里的改动 → **单独列出、要求仔细读**；其余库（工具区、外部信息区）→ **只给索引，自己决定读不读**。
-**连着谁**：`plugin/core.js` 的 `buildChangeIndexPrompt`；`${review}/milieu-state.json` 里 `review*` / `other*` 六个桶。
+**连着谁**：`plugin/core/criteria.js` 的 `buildChangeIndexPrompt`；`${review}/milieu-state.json` 里 `review*` / `other*` 六个桶。
 
 ## 7 · 认知库多大才算"建立完成"（可以开始预加载）
 
 **默认**：文件数 ≥ 10、总大小 ≥ 10 KB、观察窗 5 分钟、窗内新增 < 30%、窗内变动 < 20%。
-**连着谁**：`plugin/core.js` 的 `READINESS_SPEC` / `evaluateReadiness`；这些数字**被 8 条自测断言钉着**，改数字必须同时改断言。
+**连着谁**：`plugin/core/criteria.js` 的 `READINESS_SPEC` / `evaluateReadiness`；这些数字**被 8 条自测断言钉着**，改数字必须同时改断言。
 
 ## 8 · 外部信息区怎么用
 
