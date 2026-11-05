@@ -5,7 +5,11 @@
 //   · **`texts` 不在这里**：它是函数（`core/texts.js` 的 `DEFAULT_TEXTS`），由 `core/boot.js`
 //     在装配时合并——`config/` 依赖 `core/` 会形成反向依赖。
 //   · `criteria` 的默认值与合并只有一处（`config/criteria.js`），这里只引用。
+//   · **Volatile 归一在这里统一做**（`config/values.js`）：Loader 交给 `apply` 的配置里，
+//     `.volatile()` 字段是引用对象；`withDefaults` 是所有配置的入口，先把引用展开成普通值，
+//     后面的规划/合并/child 配置就只面对普通数据（task-12）。
 import { DEFAULT_CRITERIA, mergeCriteria } from './criteria.js';
+import { plainConfig } from './values.js';
 
 /**
  * 默认配置（**除 `texts` 外**）。
@@ -55,11 +59,15 @@ export const DEFAULT_CONFIG = {
  *
  * `texts` 不在这里合并：`core/boot.js` 拿 `DEFAULT_TEXTS` 兜底（本层不依赖 core/）。
  *
- * @param {object} [config] 补丁层给的那一份（可能缺字段）
+ * **Volatile 引用先展开**：传入的配置可能来自 Cordis Loader（即时字段是 `.get()` 引用），
+ * 这里统一走 `plainConfig`，保证下面的浅/深合并只处理普通数据。
+ *
+ * @param {object} [config] 补丁层给的那一份（可能缺字段；可能含 Volatile 引用）
  * @returns {object} 归一后的配置
  */
 export function withDefaults(config) {
-  const patch = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
+  const unwrapped = plainConfig(config);
+  const patch = unwrapped && typeof unwrapped === 'object' && !Array.isArray(unwrapped) ? unwrapped : {};
   return {
     ...DEFAULT_CONFIG,
     ...patch,

@@ -66,15 +66,25 @@ github:sxwpskd/dsh-milieu
 
 想钉版本：在仓库的 commit 页面复制 SHA，写成 `github:sxwpskd/dsh-milieu#<sha>`。
 
-装完**完全退出 DSH，再打开**。需要 DSH **0.2.x**（含 0.2.1 预发布）；本包零依赖。
+装完**完全退出 DSH，再打开**。需要 DSH **0.2.x**（含 0.2.1 预发布）；本包只有一个运行时依赖 `@deepseek-ai/schemastery`（Config 表单/校验）。
 
 ### 2.5 只读配置浮球（界面内，不是桌面级窗口）
 
 DSH 页面右下角有一个 **⚙ 浮球**：点开只读面板，显示 `milieu-state.json` 里的**生效 `criteria`**（宿主合并后的值，不是 `cordis.patch.yml` 默认层）。带“刷新”，不写配置。
 
 - 只是 **DSH 页面内**的浮层（`shell.overlay`），不会浮在别的应用上面；桌面级悬浮窗需要宿主/独立程序，不在插件能力内。
-- 当前**只读**：界面只有 `workspaceFiles` 读能力；可编辑写回要接 DSH 官方 settings / Config schema，是后续工作（W3）。
+- 当前**只读**；编辑走下面的插件管理页行配置。
 - 浮球渲染失败只跳过自己（错误边界），不影响重读卡片。
+
+### 2.6 插件管理页的行配置
+
+侧栏「插件」→ `dsh-milieu` 组合包 → 行 `milieu` → **配置**：打开该行的独立配置页。
+
+- **工作区列表**只读展示 `workspaces[]`（结构性配置，增删/改路径请改 profile patch 后重载）；
+- **即时字段**可编辑：`preloadSession`、`autoState`、`criteria` 下的标量（预加载/工作区监控/重读判据）；
+- 保存走 DSH 官方 `form.mutate`：Host 校验完整 Config、写 profile patch；保存成功会重载工作区实例（不是逐字段增量）；
+- 页面在 Host 没给 `form`、只读、加载中、保存失败时都只降级显示，不把插件管理页搞白；
+- 本页不直接写 `.dsh-milieu/` 或 `milieu-state.json`。
 
 ### 装好后的建议
 

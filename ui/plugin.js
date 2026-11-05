@@ -22,6 +22,7 @@
 import { shouldShowCard, markShown } from './card-criteria.js';
 import { MilieuReturnCard } from './card.js';
 import { MilieuSettingsBall } from './settings-ball.js';
+import { MilieuConfigPage, CONFIG_PAGE_KEY } from './config-page.js';
 import { promptReadViaRemote } from './remote.js';
 import { createStateReader } from './state-reader.js';
 import { currentMainSessionId, sessionActivityAt } from './activity.js';
@@ -121,6 +122,14 @@ export function createClientPlugin({ React, ctx, bootId }) {
   });
 
   /**
+   * 行配置页的错误边界：配置页是插件管理页里的可选内容，渲染失败只吞页面本体，
+   * **不能把插件管理页整块搞白**（fail-open，与浮球同理）。
+   */
+  const ConfigBoundary = createErrorBoundary(React, {
+    onError: (failure) => log('warn', '配置页渲染失败（已跳过）：' + failure.reason),
+  });
+
+  /**
    * 取平台会话列表（当前会话 id 与最后活动时间都从它算）。
    * **真环境的 ctx 是代理：读未声明的属性会抛错**，所以包起来读——也不让坏 ctx 把界面搞崩。
    */
@@ -164,6 +173,15 @@ export function createClientPlugin({ React, ctx, bootId }) {
   function SettingsBallView() {
     return React.createElement(SettingsBoundary, null,
       React.createElement(MilieuSettingsBall, { React, readState: readSettingsState }));
+  }
+
+  /**
+   * 行配置页视图（`plugins.row.config`）：页面宿主传入 `{ t, view, form }`，这里原样转发。
+   * 错误边界只包页面本体——配置页坏了不影响插件管理页的其它部分。
+   */
+  function ConfigPageView(props) {
+    return React.createElement(ConfigBoundary, null,
+      React.createElement(MilieuConfigPage, { React, ...props }));
   }
 
   /**
@@ -455,6 +473,21 @@ export function createClientPlugin({ React, ctx, bootId }) {
           if (typeof d === 'function') disposers.push(d);
         } catch (err) {
           log('warn', '挂配置浮球失败：' + String((err && err.message) || err));
+        }
+      }
+
+      // ②c 行配置页（`plugins.row.config`，key = `<包名>#<Loader 行 id>`）。
+      //     只出现在插件管理页的 `dsh-milieu` 行详情里（`view:'page'`）；与卡片、`shell.overlay`
+      //     浮球**互相独立**：注册失败只 warn，不影响另外两个，也不让插件页整块崩。
+      if (slots && typeof slots.inject === 'function' && typeof slots.register === 'function') {
+        try {
+          const d = slots.inject('plugins.row.config', () => slots.register(
+            { name: 'plugins.row.config', key: CONFIG_PAGE_KEY },
+            ConfigPageView,
+          ));
+          if (typeof d === 'function') disposers.push(d);
+        } catch (err) {
+          log('warn', '挂配置页失败：' + String((err && err.message) || err));
         }
       }
 

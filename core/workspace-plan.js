@@ -13,6 +13,7 @@
 import { isAbsolute, resolve } from 'node:path';
 import { withDefaults } from '../config/defaults.js';
 import { mergeCriteria } from '../config/criteria.js';
+import { plainConfig } from '../config/values.js';
 import { workspaceKey } from '../utils/path.js';
 
 /** 普通对象（配置补丁的形状）。 */
@@ -75,7 +76,10 @@ function childConfigOf(top, overrides, resolvedPath) {
  *   · `mode:'invalid'`    —— 配置非法，`children` 为空、`errors` 说明原因（启动器据此拒绝启动并报告）
  */
 export function planWorkspaces(rawConfig) {
-  const raw = isPlainObject(rawConfig) ? rawConfig : {};
+  // **Volatile 引用先展开**（task-12）：配置可能来自 Cordis Loader，即时字段是引用对象；
+  // 规划器只处理普通数据，不能把引用对象当数组/对象用。
+  const plainInput = plainConfig(rawConfig);
+  const raw = isPlainObject(plainInput) ? plainInput : {};
   const top = withoutWorkspaces(raw);
   const list = raw.workspaces;
 

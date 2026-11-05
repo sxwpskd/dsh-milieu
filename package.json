@@ -47,6 +47,9 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "packageManager": "pnpm@11.7.0",
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5"
+  },
   "peerDependencies": {
     "@deepseek-ai/dsh": ">=0.2.0-0 <0.3.0 || >=0.2.1-0 <0.3.0"
   },
@@ -60,6 +63,7 @@
     "version": "0.1.0：状态文件形状变了（lastReadAt 标量 → managedSessions 表，stateVersion 1 → 2），按 CONVENTION 第四节升 minor。",
     "files": "白名单 = 包里到底有什么（CONVENTION.md 第四节）。包内只许有包自己的东西：代码 + 补丁层 + 三层文档 + README。",
     "engines": "同时允许 Node 22 与 24——官方静态检查（manifest-engines）要求，2026-10-14 实测。",
-    "client": "界面那一半必须打成**普通脚本**（平台按 classic script 加载，不是 ES 模块）：`exports['./client']` 指向**生成物** `lib/client.js`。改界面源码后跑 `node tools/build-client.mjs` 重新生成（零依赖，不用打包工具）。2026-10-18 真机踩到 `Cannot use import statement outside a module`，就是这条。"
+    "client": "界面那一半必须打成**普通脚本**（平台按 classic script 加载，不是 ES 模块）：`exports['./client']` 指向**生成物** `lib/client.js`。改界面源码后跑 `node tools/build-client.mjs` 重新生成（零依赖，不用打包工具）。2026-10-18 真机踩到 `Cannot use import statement outside a module`，就是这条。",
+    "dependencies": "`@deepseek-ai/schemastery` 是**运行时依赖**：`config/schema.js` 用它声明 Config（Cordis 配置校验/Volatile），发布时由 npm 安装。本机 dev link 没有 node_modules，用 `node tools/extract-schemastery.mjs` 从安装版 app.asar 抽一份未跟踪副本到 `plugin/node_modules/`（`.gitignore` 已忽略，不 commit）。"
   }
 }
