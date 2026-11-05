@@ -9,8 +9,10 @@
 //
 // **纯模块、零 import**：core / changes / views / state / client 都能引，不产生环。
 //
-// 字段分四组：
+// 字段分六组：
 //   判据（core/criteria.js）      structuralThreshold / contentThreshold / staleHintDays / promptThresholdMs / readiness / fingerprint
+//   预加载（core/preload.js）     preloadIdleMs（"用过的预加载会话多久算空闲"）
+//   监控（core/*-monitor.js）     preloadPollMs（预加载）/ workspacePollMs（工作区改动）
 //   台账（core/changes.js）       eventKeepDays / eventKeepCount
 //   视图（core/views.js）         staleDays / staleMaxReview
 //   客户端 / 宿主                 clientMemoryLimit / pollMs / readTimeoutMs / agentLoopWaitMs
@@ -21,6 +23,21 @@ export const DEFAULT_CRITERIA = {
   staleHintDays: 30,               // 距上次阅读超过这么多天 → 只提示，不重读
   promptThresholdMs: 5 * 60 * 1000, // 距这条会话最后活动 ≥ 5 分钟才弹卡
 
+  // ---- 预加载：被用户用过的预加载会话，空闲多久才算"可以毕业并新建"（core/preload.js） ----
+  // 独立于 promptThresholdMs：那个管"弹不弹重读卡"，这个管"预加载会话要不要换新"；
+  // 两者碰巧都是 5 分钟，但一个改不应牵动另一个（2026-10-31 定）。
+  preloadIdleMs: 5 * 60 * 1000,
+
+  // ---- 监控：预加载会话的长期 effect 多久兜底扫一次（core/preload-monitor.js） ----
+  // 轮次事件（turn/end）已经能及时触发；定时只是"事件丢了也能自愈"的低频兜底。
+  // 别调太小：每 tick 都会读状态文件 + 扫认知库（只读，但没必要）。
+  preloadPollMs: 60 * 1000,
+
+  // ---- 监控：工作区改动的长期 effect 多久兜底扫一次（core/workspace-monitor.js） ----
+  // 与 preloadPollMs 各自独立：一个管"会话对不对"，一个管"工作区变没变"；
+  // 改一个不应牵动另一个。turn/end 已经能及时触发，定时只是防丢事件的兜底。
+  workspacePollMs: 60 * 1000,
+
   // ---- 判据：认知库"建立完成"的门槛（core/criteria.js 的 evaluateReadiness） ----
   readiness: {
     minFiles: 10,                  // 文件数 ≥ 10
@@ -28,6 +45,11 @@ export const DEFAULT_CRITERIA = {
     windowMs: 5 * 60 * 1000,       // 观察窗：5 分钟
     maxGrowthRate: 0.30,           // 窗内新增速度 < 30%
     maxChangedRatio: 0.20,         // 窗内变动占比 < 20%
+    // 认知库里的**插件自己产物**：算 readiness 时不计数、不读、事件也不计入窗内新增/变动。
+    // 它们是插件写的动态文件（状态文件、状态页），不是"认知"；否则插件自己能把门槛顶高。
+    // 相对认知库（libs.review）；**只影响 readiness，不影响变更账**（变更账仍记它们，
+    // 客户端判"工作区变没变"用的是变更账，两者不是一回事）。
+    ignore: ['milieu-state.json', 'STATE.md'],
   },
 
   // ---- 判据：会话指纹保留策略（core/criteria.js 的 planFingerprintRetention） ----

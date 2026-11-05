@@ -28,6 +28,7 @@ export const CODES = Object.freeze({
   // ---- 会话 ----
   SESSION_CREATE_FAILED: 'session-create-failed', // 建会话 / 建 agent 失败
   SESSION_INSPECT_FAILED: 'session-inspect-failed', // 查会话状态失败
+  SESSION_LIST_FAILED: 'session-list-failed',   // 读会话列表失败（事件监听之外的另一条宿主能力）
   SESSION_PROMPT_FAILED: 'session-prompt-failed', // 发请求失败
 
   // ---- 状态账 / 注入页 ----

@@ -110,6 +110,67 @@ function samePath(a, b) {
 }
 
 /**
+ * 把宿主给的 disposer 归一成**一个函数**（Cordis 的 `ctx.on` 返回函数；
+ * 别的实现可能返回 `{dispose()}` 或什么都不返回）。核心层只认"调用它就取消订阅"。
+ */
+function toDisposer(value) {
+  if (typeof value === 'function') return value;
+  if (value && typeof value.dispose === 'function') {
+    return () => {
+      try { value.dispose(); } catch { /* 取消订阅失败不能反噬调用方 */ }
+    };
+  }
+  return () => {};
+}
+
+/** 时间字段归一成毫秒数；认数字与 ISO 字符串，其余 → null（不知道就说不知道）。 */
+function toMillis(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+/** 会话行里的 id（宿主字段名可能是 `id` / `sessionId`）。 */
+function sessionIdOf(row) {
+  if (!row || typeof row !== 'object') return null;
+  const id = row.id ?? row.sessionId;
+  return typeof id === 'string' && id ? id : null;
+}
+
+/**
+ * 宿主 `sessionController.list` 的返回值 → `[{id, updatedAt}]`（**只这一种形状**，核心层不用猜宿主）。
+ *
+ * 平台文档给的是 "visible Session summaries ordered by activity"，但返回值包装在不同版本里
+ * 见过三种：裸数组、`{items:[…]}`、`{value:[…]}`。这里统一拆包；
+ * **认不出来就返回 null**（让调用方按"读不到"保守处理，而不是当成"列表是空的"）。
+ *
+ * @returns {Array<{id:string, updatedAt:number|null}>|null}
+ */
+function normalizeSessionList(raw) {
+  let rows = null;
+  if (Array.isArray(raw)) rows = raw;
+  else if (raw && typeof raw === 'object') {
+    if (Array.isArray(raw.items)) rows = raw.items;
+    else if (Array.isArray(raw.value)) rows = raw.value;
+    else if (Array.isArray(raw.sessions)) rows = raw.sessions;
+  }
+  if (!rows) return null;
+  const out = [];
+  for (const row of rows) {
+    const id = sessionIdOf(row);
+    if (!id) continue; // 没有 id 的行没有对账价值
+    const updatedAt = toMillis(
+      row.updatedAt ?? row.updatedAtMs ?? row.lastActivityAt ?? row.activityAt ?? row.at,
+    );
+    out.push({ id, updatedAt });
+  }
+  return out;
+}
+
+/**
  * 造一份宿主能力对象。
  *
  * 一次 `apply` 里会造多次：顶层一次；每个 `ctx.inject` 回调里再用**回调的 ctx** 造一次
@@ -117,9 +178,10 @@ function samePath(a, b) {
  *
  * 能力面（核心层只认这些名字，不认宿主接口名）：
  *   · `logger()` / `cwd()` / `canInject()` / `effect(cb)` / `awaitWorkspace(cb)` / `awaitPreload(cb)`
+ *   · `onSessionEvent(cb)`：订阅持久会话事件（**长期 effect 的触发源**），返回 disposer
  *   · `systemPrompt.available()/orderOf()/section()`
  *   · `workspace.available()/listPaths()/resolveId()/unarchive()`
- *   · `session.available()/canPrompt()/canInspect()/create()/inspect()/prompt()`
+ *   · `session.available()/canPrompt()/canInspect()/create()/inspect()/prompt()/list()`
  *   · `agents.available()/create()`
  *   · `texts` / `labels`（宿主文案，见上）
  *
@@ -164,6 +226,35 @@ export function createDsh(ctx) {
      */
     effect(callback) {
       return ctx.effect(callback);
+    },
+
+    /**
+     * 订阅**持久会话事件**（官方用法 `ctx.on('session/event', (session, event) => …)`）。
+     *
+     * 为什么需要它：预加载会话要在"用户的轮次结束之后"长期对账（`turn/end` 是最自然的触发点），
+     * 这是挂载后的长期 effect，不是启动时算一次。
+     *
+     * 三条边界（都不能破）：
+     *   · 宿主没有 `ctx.on`（或注册抛错）→ 返回 **no-op disposer**，核心层照常跑定时兜底；
+     *   · 宿主回调里**不许抛**：订阅者（核心层）的异常在这里收掉，不把宿主事件总线带崩；
+     *   · 事件名 `session/event` 是宿主词汇，只出现在本文件（分层规矩）。
+     *
+     * @param {(session:object, event:object) => void} callback
+     * @returns {Function} 取消订阅的 disposer（永远可调用、无副作用）
+     */
+    onSessionEvent(callback) {
+      const noop = () => {};
+      try {
+        if (!ctx || typeof ctx.on !== 'function' || typeof callback !== 'function') return noop;
+        const disposer = ctx.on('session/event', (session, event) => {
+          try {
+            callback(session, event);
+          } catch { /* 订阅者异常不能抛回宿主事件总线 */ }
+        });
+        return toDisposer(disposer);
+      } catch {
+        return noop;
+      }
     },
 
     /**
@@ -337,6 +428,37 @@ export function createDsh(ctx) {
           return await sc.inspect(sessionId);
         } catch (err) {
           return callFailed(err, CODES.SESSION_INSPECT_FAILED);
+        }
+      },
+
+      /**
+       * 读**可见会话列表**（核心对账用：判断受管表里的会话还在不在、最后一次活动是什么时候）。
+       *
+       * 宿主签名是 `list(request, signal)`：请求是保留的空对象；signal 只用于底层持久化读，
+       * 我们给一个**一次性** signal（本层不持有它的生命周期）。
+       *
+       * 失败一律 `{ok:false, code:SESSION_LIST_FAILED, blockedBy:'host'}`：
+       *   · 没有这个接口（老宿主）——核心层据此走"保守：不新建、不删除"；
+       *   · 返回值形状认不出来——**也当失败**，不能当"列表为空"（那会误删受管记录）。
+       *
+       * @returns {Promise<{ok:true, value:Array<{id:string, updatedAt:number|null}>}|{ok:false, reason:string, code:string, blockedBy:string}>}
+       */
+      async list() {
+        const sc = service(ctx, SERVICE.session);
+        if (!sc || typeof sc.list !== 'function') {
+          return fail('宿主没有 ' + SERVICE.session + '.list', 'host', CODES.SESSION_LIST_FAILED);
+        }
+        try {
+          const signal = typeof AbortController === 'function' ? new AbortController().signal : undefined;
+          const raw = await sc.list({}, signal);
+          if (raw && raw.ok === false) {
+            return fail('读取会话列表失败：' + String(raw.reason || '宿主返回失败'), 'host', CODES.SESSION_LIST_FAILED);
+          }
+          const value = normalizeSessionList(raw);
+          if (!value) return fail('读取会话列表失败：宿主返回的形状不认识', 'host', CODES.SESSION_LIST_FAILED);
+          return { ok: true, value };
+        } catch (err) {
+          return callFailed(err, CODES.SESSION_LIST_FAILED);
         }
       },
 

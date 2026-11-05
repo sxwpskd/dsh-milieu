@@ -26,6 +26,8 @@ export const DEFAULT_CONFIG = {
   ensureLibs: true,
   // **预加载会话**（需求 R4 / M5）：工作区没有我们的预加载会话就建一条，并让它真读一次。
   // **默认关**：它要建 agent、会真跑一次任务（花钱、动会话列表）。
+  // 打开后是**挂载后的长期 effect**（初始一次 + `turn/end` 去抖 + `criteria.preloadPollMs`
+  // 低频兜底），对账在 `core/preload.js`，调度与日志在 `core/preload-monitor.js`。
   preloadSession: false,
   // **自动生成状态文件**（需求 R5 的地基）：会话开场扫一次工作区、产出事件流。
   // 默认开——它只做"只读扫描 + 写我们自己的状态文件"。
