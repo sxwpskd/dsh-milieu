@@ -33,7 +33,13 @@ export const DEFAULT_CONFIG = {
   // 默认开——它只做"只读扫描 + 写我们自己的状态文件"。
   autoState: true,
   // 工作区根。空 = 问平台要工作区表（只有一个就用；多个用平台顺序第一个；一个都没有就不写）。
+  // **只用于单工作区兼容**：`workspaces` 非空时忽略它（见 Workspace 管理 A 方案）。
   workspaceRoot: '',
+  // **多工作区列表**（WORKSPACE-MANAGEMENT.md A 方案）：每项 `{ path, ...覆盖 }` 挂一个 child fiber。
+  //   · 默认空数组 = 单工作区兼容（仍按 `workspaceRoot` / 平台解析，只挂一个实例）；
+  //   · 非空时**忽略顶层 `workspaceRoot`**，每项 `path` 必须是非空绝对路径，重复路径直接拒绝；
+  //   · 每项可覆盖下面的任意字段（`libs` / `criteria` 深合并），child 配置不递归 `workspaces`。
+  workspaces: [],
   // **判据与显示阈值**：默认值在 `config/criteria.js`；这里给的是可被补丁层覆盖的那一份。
   // 宿主把**生效值**写进 `milieu-state.json` 的 `criteria`，客户端读同一份（两半不许各写一份）。
   criteria: DEFAULT_CRITERIA,

@@ -42,14 +42,17 @@ console.log('   注册的 section 共 ' + sections.length + ' 个：' + sections
 console.log('   最后捕获的 name  = ' + (captured && captured.name));
 console.log('   order            = ' + (captured && captured.order) + '（getSectionOrder 给了 4242）');
 
-console.log('\n== 3. text() 真的读到了那一页吗 ==');
-const out = captured ? captured.text() : '';
+console.log('\n== 3. text(AssembleContext) 真的读到了那一页吗 ==');
+// 多工作区 A 方案：section 文本函数按 `context.agent.session.header.cwd` 过滤——
+// 这里造一个"当前会话就在这个工作区"的假 AssembleContext（与平台形状一致）。
+const assembleContext = { agent: { session: { header: { cwd: root } } } };
+const out = captured ? captured.text(assembleContext) : '';
 console.log('   返回长度 = ' + out.length + ' 字节');
 console.log('   含 system-reminder 包裹: ' + out.includes('<system-reminder>'));
 console.log('   含工作区根路径: ' + out.includes(root));
 
 console.log('\n== 4. 第二次调用会不会因为"内容没变"而跳过 ==');
-console.log('   第二次返回长度 = ' + (captured ? captured.text().length : 0) + '（0 = 正确跳过）');
+console.log('   第二次返回长度 = ' + (captured ? captured.text(assembleContext).length : 0) + '（0 = 正确跳过）');
 
 console.log('\n== 5. 拆解 ==');
 if (typeof dispose === 'function') dispose();

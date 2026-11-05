@@ -1,7 +1,9 @@
-// dsh-milieu —— 宿主半边的**启动流程**（核心层：不写宿主服务名、不 import 'node:fs'、不渲染界面）
+// dsh-milieu —— **单个工作区实例的启动流程**（核心层：不写宿主服务名、不 import 'node:fs'、不渲染界面）
 //
-// 它是从 `index.js` 的 `apply()` 搬出来的业务主体（ARCHITECTURE.md §6.3）：
-//   ① 注册状态页 section（同步；注入文本惰性读）；
+// 它由 `core/workspace-instance.js`（每个工作区一个 child fiber）在装配后调用；
+// 一个实例 = 一个 root 的一份 boot：
+//   ① 注册状态页 section（同步；注入文本惰性读）；**section 名按工作区唯一化**，文本只给
+//      cwd 匹配的会话返回内容（见 `core/section-name.js`，多工作区 A 方案）；
 //   ② 定工作区根（配置 > 平台工作区表 > cwd 兜底）；
 //   ③ 启动序列：挂日志文件 sink → 写协议 → **首扫工作区**（原始日志 / 状态文件 / 注入页）
 //      → 启动工作区监控与预加载监控（长期 effect，共享一条串行队列）；
@@ -40,6 +42,7 @@ import { startWorkspaceMonitor, reportScanResult } from './workspace-monitor.js'
 import { guardSync } from '../exception/guard.js';
 import { CODES } from '../exception/codes.js';
 import { workspaceKey } from '../utils/path.js';
+import { workspaceSectionName, sectionMatchesRoot } from './section-name.js';
 
 /** 兜底 order：拿不到官方分区顺序时用（数值只求稳定，不求精确）。 */
 const FALLBACK_ORDER = 500;
@@ -441,10 +444,17 @@ function bootInner({ host, fs, log, config, attachFileSink } = {}) {
     let started = false;
 
     // 状态页**先注册**（同步；compose 惰性读 `root`）。定义层不再注入——它已经在工作区的 AGENTS.md 里了。
+    //
+    // 多工作区（A 方案 / WORKSPACE-MANAGEMENT.md §4）：
+    //   · section 名按工作区**唯一化**（`dsh-milieu:workspace-state:<8位hash>`），否则同包多实例注册重名会抛；
+    //   · 文本函数收 `AssembleContext`，用 `context.agent.session.header.cwd` 归一后与 root 比较——
+    //     只有**自己工作区的会话**才返回内容；cwd 不匹配 / 没有 agent → ''（裸组装不注入）。
     if (host.systemPrompt.available()) {
       try {
-        registerSection('dsh-milieu:workspace-state', 'MILIEU_WORKSPACE_STATE', ORDER_STATE,
-          () => composeSection(cfg, lastSent, root, fs, guardLog));
+        registerSection(workspaceSectionName(root), 'MILIEU_WORKSPACE_STATE', ORDER_STATE,
+          (assembleContext) => (sectionMatchesRoot(assembleContext, root)
+            ? composeSection(cfg, lastSent, root, fs, guardLog)
+            : ''));
       } catch (err) {
         warn('状态页注册失败：' + String((err && err.message) || err));
       }

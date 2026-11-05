@@ -1,40 +1,25 @@
-// dsh-milieu —— 宿主半边入口（**只装配**；业务在 `core/boot.js` 与 `core/` 其余文件）
+// dsh-milieu —— 宿主半边**入口 / 启动器**（只做三件事：读配置、校验、挂工作区实例）
 //
-// 它做三件事，而且只做这三件：
-//   ① 声明依赖（Cordis 契约：不声明就访问服务会抛 `cannot get property … without inject`）；
-//   ② 创建能力对象：宿主 adapter（**唯一出现宿主服务名的地方**）、文件系统 adapter、日志器；
-//   ③ 调 `core/boot.js`，把它的清理函数原样交还宿主（`ctx.effect` 自己交还 disposer）。
+// A 方案（WORKSPACE-MANAGEMENT.md）：profile 里仍然只有**一个 Loader 行**；
+//   这一行读 `workspaces` 列表，用 `ctx.plugin(workspacePlugin, childConfig)` 为每个工作区挂一个
+//   **child fiber**。每个 child 只碰自己的 root；用户没配的工作区不建 fiber、不写文件、不弹卡。
 //
-// 日志（task-7 / LOG-SCHEMA.md v2）：
-//   · 入口生成 **bootId**（8 位；宿主每次启动一个）并创建新形态 logger（`side:"host"`）；
-//   · sinks 两条：① 宿主控制台 sink（把记录还原成**旧日志的可见文本**，控制台行为不变；
-//     debug 默认关）；② **延迟挂载的文件 sink**（工作区根要到 boot 里才知道，根定了 boot 才 attach）；
-//   · 文件 sink 写不进去时用**宿主 logger 原通道**报告一次（不经过可能已坏掉的日志链）。
+// 为什么不是多行 profile：DSH 的 client module system 扫到同一个包出现在多个 active Loader 行时
+//   会抛 `package … resolves from multiple active Loader sources`（我们的包有 `dsh.client`），
+//   所以多实例只能在**一个 Loader 行内**用 Cordis 原生的多 fiber 实现。
 //
-// 设计纪律：纯 ESM、零依赖、无构建；会随部署变化的值一律走配置（`config/defaults.js` 兜底）；
-// 这里**不写业务判断**、不拼协议文本、不读写文件（ARCHITECTURE.md §3.1-5）。
+// 分工（不要混）：
+//   · **本文件**：配置规划（`core/workspace-plan.js`）、重复/非法路径拒绝、child 挂载、清理；
+//   · **child 实例**（`core/workspace-instance.js`）：adapters / logger / boot / 监控，一个工作区一份；
+//   · 本文件**不建 logger、不跑 boot、不碰工作区文件**。
 //
-// 异常边界（task-5）：装配本身也可能抛（例如宿主 ctx 形状不对）。激活期抛错会被平台算成
-//   **致命加载失败**，所以整段装配包在 `guardSync` 里——归一、报一次（结构化 `error.caught`）、
-//   返回空清理函数，**不让异常抛给宿主**；同时**不假装成功**。
-import { createDsh } from './adapter/dsh.js';
-import { createFs } from './adapter/fs.js';
-import { createLogger } from './log/logger.js';
-import { makeBootId } from './log/schema.js';
-import { createFileSink, createDeferredSink } from './log/file-sink.js';
-import { boot } from './core/boot.js';
+// 异常边界（task-5 惯例）：挂载一个 child 失败只报告，不影响其他 child；启动器本身不抛给宿主。
+// 清理：返回的清理函数会 dispose 每个 child fiber（真实宿主里父 fiber 卸载也会递归 dispose，
+//   这里显式做一次是为了让离线测试与"手动卸载"路径也走同一条）。
+import { planWorkspaces } from './core/workspace-plan.js';
+import { workspacePlugin } from './core/workspace-instance.js';
 import { guardSync } from './exception/guard.js';
 import { CODES } from './exception/codes.js';
-
-/**
- * **依赖声明**（Cordis 契约）：要访问某个服务，必须先在 `inject` 里声明它。
- * 不声明就访问 → `cannot get property … without inject`（2026-10-18 真机踩到）。
- *   · `systemPrompt` —— 注入状态页要用；
- *   · `agents`     —— 建预加载会话要用（`preloadSession` 开着时）。
- * `logger` / `effect` 是 ctx 上的直接属性，不需要声明；
- * 工作区 / 会话控制器只在 `ctx.inject` 回调里用，不在顶层声明。
- */
-export const inject = ['systemPrompt', 'agents'];
 
 /** 安全地取宿主 logger（真 ctx 是代理：读未声明属性可能抛）。 */
 function hostLoggerOf(ctx) {
@@ -46,85 +31,83 @@ function hostLoggerOf(ctx) {
 }
 
 /**
- * **宿主控制台 sink**：把结构化记录还原成旧日志的可见文本（`record.message` 逐字写过去）。
- *
- * 为什么需要它：新形态 logger 只写 sinks——不接宿主 logger 就没有控制台输出（行为会变）。
- * 为什么只写 message：旧代码 `log.info/warn` 的文案已经带 `[milieu] ` 前缀，结构化字段进文件即可；
- *   `debug` 默认关（LOG-SCHEMA §3）→ 控制台不输出（文件里仍有）。
+ * 启动器自己的报告口（**还没有实例 logger**，所以用宿主 logger 原通道，最后退到控制台）。
+ * 只用于配置/挂载失败的"一声报告"——实例的日志由各自 child logger 负责。
  */
-function hostConsoleSink(hostLogger) {
-  return (line, record) => {
-    if (!record || typeof record.message !== 'string') return;
-    if (record.level === 'debug') return; // 开发细节默认关
-    const level = record.level === 'error' ? 'error' : (record.level === 'warn' ? 'warn' : 'info');
-    let fn = hostLogger && hostLogger[level];
-    // 宿主 logger 不一定有 error 级：主流程失败不能因此静默，退回 warn。
-    if (typeof fn !== 'function' && level === 'error' && hostLogger) fn = hostLogger.warn;
-    if (typeof fn === 'function') fn.call(hostLogger, record.message);
-  };
+function reportProblem(ctx, message) {
+  const text = '[milieu] ' + message;
+  try {
+    const logger = hostLoggerOf(ctx);
+    if (logger && typeof logger.warn === 'function') {
+      logger.warn(text);
+      return;
+    }
+  } catch { /* 宿主 logger 坏了：试控制台 */ }
+  try {
+    if (typeof console !== 'undefined' && typeof console.warn === 'function') console.warn(text);
+  } catch { /* 控制台也没有：只能放弃（不能因此抛给宿主） */ }
 }
 
 /**
- * 宿主入口。
+ * 把一个 child 配置挂成实例。
+ *
+ * 真实 Cordis：`ctx.plugin(plugin, config)` 返回 fiber（一个工作区一个 fiber，父 fiber 卸载时递归卸载）。
+ * 离线假 ctx / 没有 plugin API 的宿主：**直接调用实例的 apply**（等价于一个实例）——
+ * 这是项目"扩展点查不到就降级"的惯例，只在没有 `ctx.plugin` 时使用，有 plugin API 的路径一律走 fiber。
+ *
+ * @returns {Function} 清理函数（dispose fiber 或调用实例 apply 的清理）
+ */
+function mountChild(ctx, childConfig) {
+  if (ctx && typeof ctx.plugin === 'function') {
+    const fiber = ctx.plugin(workspacePlugin, childConfig);
+    return () => {
+      try {
+        if (fiber && typeof fiber.dispose === 'function') {
+          const pending = fiber.dispose();
+          if (pending && typeof pending.catch === 'function') pending.catch(() => { /* 卸载失败不反噬宿主 */ });
+        }
+      } catch { /* 卸载失败不反噬宿主（父 fiber 卸载还会再递归一次） */ }
+    };
+  }
+  const cleanup = workspacePlugin.apply(ctx, childConfig);
+  return typeof cleanup === 'function' ? cleanup : () => {};
+}
+
+/**
+ * 宿主入口 / 启动器。
  * @param {object} ctx Cordis ctx
  * @param {object} rawConfig 补丁层给的配置（`cordis.patch.yml` 的 config）
- * @returns {Function} 清理函数（由 `core/boot.js` 里的 `ctx.effect` 交还）
+ * @returns {Function} 清理函数：dispose 所有 child fiber
  */
 export function apply(ctx, rawConfig) {
-  const hostLogger = hostLoggerOf(ctx);
-  const bootId = makeBootId();
-  const fileSink = createDeferredSink();
-  const log = createLogger({
-    side: 'host',
-    bootId,
-    module: 'host',
-    sinks: [fileSink, hostConsoleSink(hostLogger)],
-    hostLogger,
-  });
-
-  const started = guardSync('插件装配', () => {
-    const host = createDsh(ctx);
-    const fs = createFs();
-    /**
-     * 工作区根确定后才挂文件 sink（启动早期没有工作区根，见 LOG-SCHEMA §6.1）。
-     * 报告口用**宿主 logger 原通道**：此时文件日志可能已经坏了，不能再经过日志链。
-     */
-    const attachFileSink = (root) => fileSink.attach(createFileSink({
-      fs,
-      root,
-      report: (reason) => {
-        const message = '[milieu] 日志文件写不进去（已停用文件日志）：' + reason;
-        try {
-          if (hostLogger && typeof hostLogger.warn === 'function') {
-            hostLogger.warn(message);
-            return;
-          }
-        } catch { /* 宿主 logger 也坏了：试控制台 */ }
-        try {
-          if (typeof console !== 'undefined' && typeof console.warn === 'function') console.warn(message);
-        } catch { /* 控制台也没有：只能放弃（不能影响主流程） */ }
-      },
-    }));
-    return boot({ host, fs, log, config: rawConfig, attachFileSink });
-  }, {
-    optional: false,
-    log: null, // 由下面报一次结构化 error.caught（带 code/blockedBy）
-    code: CODES.HOST_CALL_FAILED,
-    blockedBy: 'host',
-  });
-
-  if (started && started.ok === false) {
-    try {
-      log.event('error.caught', '[milieu] 插件装配失败：' + started.reason, {
-        level: 'error',
-        ok: false,
-        code: started.code,
-        blockedBy: started.blockedBy,
-        error: started.cause instanceof Error ? started.cause : undefined,
-      });
-    } catch { /* 日志不能反噬装配 */ }
-    // 装不上时交还一个**空清理函数**（宿主调用它不会炸），失败已报告。
+  const plan = planWorkspaces(rawConfig);
+  if (!plan.ok) {
+    // 配置非法：**一个实例都不挂**（不静默去重、不半挂载），如实报告。
+    reportProblem(ctx, '工作区配置无效，本次不挂载任何实例：' + plan.errors.join('；'));
     return () => {};
   }
-  return typeof started === 'function' ? started : () => {};
+
+  const cleanups = [];
+  for (const child of plan.children) {
+    const mounted = guardSync('挂载工作区实例', () => mountChild(ctx, child.config), {
+      optional: false,
+      log: null, // 启动器没有 logger；失败用下面一句人话报告
+      code: CODES.HOST_CALL_FAILED,
+      blockedBy: 'host',
+    });
+    if (typeof mounted === 'function') {
+      cleanups.push(mounted);
+    } else if (mounted && mounted.ok === false) {
+      reportProblem(ctx, '工作区实例挂载失败（' + (child.path || '默认实例') + '）：' + mounted.reason);
+    }
+  }
+
+  return () => {
+    for (const cleanup of cleanups) {
+      try {
+        const pending = cleanup();
+        if (pending && typeof pending.catch === 'function') pending.catch(() => { /* 清理失败不反噬宿主 */ });
+      } catch { /* 清理失败不反噬宿主 */ }
+    }
+  };
 }

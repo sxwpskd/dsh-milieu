@@ -36,7 +36,21 @@
         #   只有一个工作区就用它；多个时先看 cwd 命中，否则用平台顺序里的第一个（日志会报出用的是哪一个）。
         #   **不能把本机路径带进发布包**（别人机器上没有 `D:\DSH`）。
         #   要固定到某个工作区，就在用户 profile 的配置里覆盖这一项。
+        #   **只用于单工作区兼容**：`workspaces` 非空时忽略它（见 WORKSPACE-MANAGEMENT.md A 方案）。
         workspaceRoot: ''
+        # **多工作区列表**（一行 Loader + 每项一个 child fiber）：
+        #   每项至少 `{ path: '<绝对路径>' }`，可再覆盖本文件里的任意字段
+        #   （`libs` / `criteria` 深合并）；`path` 必须非空绝对路径，重复路径直接拒绝（不静默去重）。
+        #   · 空数组（默认）= 单工作区兼容：仍按上面的 `workspaceRoot` / 平台解析，只挂一个实例；
+        #   · 非空时**不再使用**顶层 `workspaceRoot` 作为额外实例；用户没配的工作区不建实例、不写文件。
+        # 示例：
+        #   workspaces:
+        #     - path: 'D:/work/ws1'
+        #       preloadSession: false
+        #     - path: 'D:/work/ws2'
+        #       preloadSession: true
+        #       criteria: { promptThresholdMs: 300000 }
+        workspaces: []
         # 是否**建预加载会话**（需求 R4）：工作区没有我们的预加载会话就建一条，并让它真读一次。
         # **一次配置、之后自动**（主人 2026-10-18 定）：不是"每次点一下"，是打开这个开关后每次启动自己检查。
         # 实现：**等 `agentLoop` 服务就绪（`ctx.inject`）再启动监控**——AgentLoop 构造时才注册工厂，
