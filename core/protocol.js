@@ -27,7 +27,7 @@ import { fail } from '../exception/result.js';
 import { normalizeError } from '../exception/normalize.js';
 import { CODES } from '../exception/codes.js';
 
-// **源文件在包根**（DEFINITION.md / SUGGESTIONS.md / RATIONALE.md）。
+// **源文件在包内 `protocol/`**（DEFINITION.md / SUGGESTIONS.md / RATIONALE.md）。
 // 本文件原来住在包根，搬进 core/ 后 HERE 少了一层——这里**上溯到包根**再拼源路径，
 // 否则"读不到协议源文件"，整个协议同步都会失败（重构时最容易静默坏掉的一处）。
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -90,14 +90,16 @@ export function upsertBlock(fileText, block) {
 
 /**
  * 读插件包内的协议源文件；读不到 → 抛出（由调用方转成"说清被什么挡的"）。
+ * 返回按**目标文件名**（DEFINITION.md / SUGGESTIONS.md / RATIONALE.md）索引，
+ * 因为包里源路径是 `protocol/<name>`，而工作区目标仍是 `.dsh-milieu/<name>`。
  * @param {{exists:Function, readText:Function}} fs 文件系统能力（只需要这两项）
  */
 export function readSources({ exists, readText } = {}) {
   const sources = {};
-  for (const [src, , what] of PROTOCOL_FILES) {
+  for (const [src, name, what] of PROTOCOL_FILES) {
     const path = join(PACKAGE_DIR, src);
     if (!exists(path)) throw new Error('插件包里缺少 ' + src + '（' + what + '）');
-    sources[src] = readText(path);
+    sources[name] = readText(path);
   }
   return sources;
 }
@@ -159,9 +161,9 @@ export function syncProtocol(o = {}) {
     // ② 三个协议文件 → <root>/.dsh-milieu/
     const dir = join(root, '.dsh-milieu');
     if (!fs.exists(dir)) fs.mkdirp(dir);
-    for (const [src, name] of PROTOCOL_FILES) {
+    for (const [, name] of PROTOCOL_FILES) {
       const target = join(dir, name);
-      const want = withFingerprint(sources[src], pid);
+      const want = withFingerprint(sources[name], pid);
       let have = null;
       if (fs.exists(target)) {
         try { have = fs.readText(target); } catch { have = null; }

@@ -1,4 +1,4 @@
-// dsh-milieu —— 协议相关的固定值（不随部署变化；协议正文在包根的三份 .md 里）
+// dsh-milieu —— 协议相关的固定值（不随部署变化；协议正文在包内 protocol/ 的三份 .md 里）
 //
 // 这些值被 `core/protocol.js`（文本拼装与同步）与 `protocol/version.js`（版本纯策略）共用。
 // **改标记 = 换一份新协议**，不要随手改（ARCHITECTURE.md §9 不变契约 2）。
@@ -13,11 +13,11 @@ export const END = '<!-- dsh-milieu:end -->';
 export const PROTO_VERSION = 'v1';
 
 /**
- * 协议文件清单：源（插件包内）→ 目标（工作区 `.dsh-milieu/`）→ 中文说明。
- * 源就是包根的三份 .md，与包内文件同名；`core/protocol.js` 负责按本表读取与写入。
+ * 协议文件清单：源（插件包内 protocol/）→ 目标（工作区 `.dsh-milieu/`）→ 中文说明。
+ * 源就是包内 `protocol/` 的三份 .md；`core/protocol.js` 负责按本表读取与写入。
  */
 export const PROTOCOL_FILES = [
-  ['DEFINITION.md', 'DEFINITION.md', '定义层（不可改）'],
-  ['SUGGESTIONS.md', 'SUGGESTIONS.md', '建议层（可调）'],
-  ['RATIONALE.md', 'RATIONALE.md', '原因层（为什么）'],
+  ['protocol/DEFINITION.md', 'DEFINITION.md', '定义层（不可改）'],
+  ['protocol/SUGGESTIONS.md', 'SUGGESTIONS.md', '建议层（可调）'],
+  ['protocol/RATIONALE.md', 'RATIONALE.md', '原因层（为什么）'],
 ];

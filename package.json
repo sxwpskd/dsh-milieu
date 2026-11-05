@@ -30,9 +30,6 @@
     "ui",
     "lib",
     "cordis.patch.yml",
-    "DEFINITION.md",
-    "SUGGESTIONS.md",
-    "RATIONALE.md",
     "README.md",
     "LICENSE"
   ],

@@ -1,6 +1,6 @@
 # 原因层 · 我们为什么这么定
 
-> 这份文件**只回答"为什么"**。规则本身在定义层（[plugin/DEFINITION.md](plugin/DEFINITION.md)）与建议层（[SUGGESTIONS.md](SUGGESTIONS.md)）。
+> 这份文件**只回答"为什么"**。规则本身在定义层（[DEFINITION.md](DEFINITION.md)）与建议层（[SUGGESTIONS.md](SUGGESTIONS.md)）。
 > **不许在这里复述规则原文**——同一件事有两个版本，第一个上当的是下一个读它的人。
 
 ## 一、它要解决的问题（换一个视角看同一件事）

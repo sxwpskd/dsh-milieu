@@ -1,9 +1,10 @@
 // dsh-milieu —— 客户端装配（界面层：注册插槽、盯当前会话、喂判据、处理收场）
 //
-// 它做三件事，而且**只做这三件**：
+// 它做四件事，而且**只做这四件**：
 //   ① 看住"当前是哪条会话"（`retainedBy.mainView` 计数变了就是切换；插槽也会直接把 sessionId 交进来）；
 //   ② 切到**我们管的**那条时，读状态文件、喂判据；
-//   ③ 判据说该弹，就把卡片注册进插槽；你点"重读"/"不用"/直接打字，卡片收场。
+//   ③ 判据说该弹，就把卡片注册进插槽；你点"重读"/"不用"/直接打字，卡片收场；
+//   ④ 在 root 的 `shell.overlay` 挂**只读配置浮球**（读状态文件里的生效 criteria，不写配置）。
 //
 // 分层的落点（ARCHITECTURE.md 工作包 C）——这里只负责"接线"，其余各归各处：
 //   · 判据 → `ui/card-criteria.js`（纯函数）；卡片 → `ui/card.js`（只渲染、不读数据）；
@@ -20,6 +21,7 @@
 
 import { shouldShowCard, markShown } from './card-criteria.js';
 import { MilieuReturnCard } from './card.js';
+import { MilieuSettingsBall } from './settings-ball.js';
 import { promptReadViaRemote } from './remote.js';
 import { createStateReader } from './state-reader.js';
 import { currentMainSessionId, sessionActivityAt } from './activity.js';
@@ -35,6 +37,9 @@ import { CODES } from '../exception/codes.js';
 
 /** 我们注册进插槽的卡片 id（同一次会话只应有一个）。 */
 const CARD_SLOT_ID = 'dsh-milieu:return-card';
+
+/** 配置浮球的插槽 id（`shell.overlay` 是 root 作用域的页面浮层，不是桌面级窗口）。 */
+const SETTINGS_SLOT_ID = 'dsh-milieu:settings-ball';
 
 /**
  * **依赖声明**（客户端 Cordis 契约）：用到的服务/命名空间必须列全，访问未声明的会抛
@@ -108,6 +113,14 @@ export function createClientPlugin({ React, ctx, bootId }) {
   });
 
   /**
+   * 配置浮球的错误边界：浮球/面板渲染崩了只吞掉浮球，**不能把异常抛进 root slot**
+   * （root slot 坏了会影响整页，比卡片更严重）。
+   */
+  const SettingsBoundary = createErrorBoundary(React, {
+    onError: (failure) => log('warn', '配置浮球渲染失败（已跳过）：' + failure.reason),
+  });
+
+  /**
    * 取平台会话列表（当前会话 id 与最后活动时间都从它算）。
    * **真环境的 ctx 是代理：读未声明的属性会抛错**，所以包起来读——也不让坏 ctx 把界面搞崩。
    */
@@ -125,6 +138,33 @@ export function createClientPlugin({ React, ctx, bootId }) {
     log,
     event: logEvent,
   });
+
+  /**
+   * 读状态文件里的**生效判据**，给只读配置浮球用。
+   *
+   * 为什么读 state 而不是 `cordis.patch.yml`：patch 只是默认/部署层，本机 profile 还有覆盖；
+   *   `milieu-state.json.criteria` 才是宿主写出的生效值（客户端卡片也读它）。
+   * 只读：这里没有写回通道；写回要接官方 settings / Config schema（W3）。
+   */
+  async function readSettingsState() {
+    const text = await stateReader.read(null);
+    if (!text) return { ok: false, reason: '读不到状态文件（宿主可能还没生成）' };
+    const parsed = parseState(text);
+    if (!parsed) return { ok: false, reason: '状态文件解析失败（内容不是合法的 milieu-state）' };
+    return {
+      ok: true,
+      criteria: mergeCriteria(DEFAULT_CRITERIA, parsed.criteria),
+      generatedAt: parsed.generatedAt,
+      workspaceKey: parsed.workspaceKey,
+      counts: parsed.counts,
+    };
+  }
+
+  /** 配置浮球视图：数据/错误边界都在这里，slot 只负责挂载。 */
+  function SettingsBallView() {
+    return React.createElement(SettingsBoundary, null,
+      React.createElement(MilieuSettingsBall, { React, readState: readSettingsState }));
+  }
 
   /**
    * 重新判断一次（切换会话或状态变化时调用）。
@@ -404,6 +444,20 @@ export function createClientPlugin({ React, ctx, bootId }) {
         }
       }
 
+      // ②b 配置浮球（只读）。`shell.overlay` 是 root 作用域的页面浮层；**不是桌面级窗口**。
+      //     注册失败不影响卡片：浮球是可选装饰，卡片是主功能。
+      if (slots && typeof slots.inject === 'function' && typeof slots.register === 'function') {
+        try {
+          const d = slots.inject('shell.overlay', () => slots.register(
+            { name: 'shell.overlay', id: SETTINGS_SLOT_ID, order: 60 },
+            SettingsBallView,
+          ));
+          if (typeof d === 'function') disposers.push(d);
+        } catch (err) {
+          log('warn', '挂配置浮球失败：' + String((err && err.message) || err));
+        }
+      }
+
       // ③ 先算一次（页面打开时可能已经在某条会话里）
       void reevaluate(currentMainSessionId(sessionsOf()));
       // 轮询是主路径，所以让测试能立刻推进一次，不必等 2 秒
@@ -440,6 +494,7 @@ export function createClientPlugin({ React, ctx, bootId }) {
       current: () => current,
       dismiss,
       listeners,
+      readSettingsState,
       logs: () => memorySink.list(),
       logSnapshot: () => memorySink.snapshot(),
     },
