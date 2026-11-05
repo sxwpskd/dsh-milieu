@@ -39,10 +39,18 @@
         workspaceRoot: ''
         # 是否**建预加载会话**（需求 R4）：工作区没有我们的预加载会话就建一条，并让它真读一次。
         # **一次配置、之后自动**（主人 2026-10-18 定）：不是"每次点一下"，是打开这个开关后每次启动自己检查。
-        # 实现：**等 `agentLoop` 服务就绪（`ctx.inject`）再建**——AgentLoop 构造时才注册工厂，
+        # 实现：**等 `agentLoop` 服务就绪（`ctx.inject`）再启动监控**——AgentLoop 构造时才注册工厂，
         #   我们早于它就会撞上 `no agent factory registered`（真机崩过一次，已按此修正）。
+        # 打开后是**挂载后的长期 effect**（2026-10-31）：初始一次 + `turn/end` 去抖 + 低频定时
+        #   （`criteria.preloadPollMs`）；用户用过预加载会话后会在空闲 `criteria.preloadIdleMs` 时
+        #   让它毕业并补一条新的，不再等下次重启。
         # **发布默认关**：它会真跑一次 agent（花钱、动会话列表）；本机验证时开过，发布包不带这个状态。
         preloadSession: false
+        # **挂载后的长期 effect**（2026-11-02）：工作区改动监控在 `autoState` 打开时启动，
+        #   `turn/end` 去抖 + `criteria.workspacePollMs` 低频兜底扫描；有变化才追加原始日志
+        #   （`.dsh-milieu/changes.jsonl`）并写状态文件，**没有变化不写**。
+        #   它与预加载监控共享一条串行队列，避免同时写 `milieu-state.json`。
+        autoState: true
         # **判据与显示阈值**：默认值在 `criteria.js`；这里可覆盖。
         # 宿主把**生效值**写进 `milieu-state.json` 的 `criteria`，客户端读同一份（两半不许各写一份）。
         criteria:
@@ -53,6 +61,12 @@
           staleHintDays: 30
           # 距这条会话最后活动 ≥ 5 分钟才弹卡
           promptThresholdMs: 300000
+          # 预加载会话：被用户用过之后，空闲多久才算"可以毕业并新建"（独立于 promptThresholdMs）
+          preloadIdleMs: 300000
+          # 预加载监控：低频兜底轮询间隔（轮次事件 turn/end 已经能及时触发；这个只是防丢事件）
+          preloadPollMs: 60000
+          # 工作区改动监控：低频兜底扫描间隔（与 preloadPollMs 独立；无变化时不写盘）
+          workspacePollMs: 60000
           # 认知库"建立完成"的门槛（evaluateReadiness）
           readiness:
             minFiles: 10
@@ -60,6 +74,11 @@
             windowMs: 300000
             maxGrowthRate: 0.30
             maxChangedRatio: 0.20
+            # 认知库里的插件自己产物：算 readiness 时不计数、不读，其事件也不计入窗内新增/变动。
+            # 相对认知库（libs.review）；**只影响 readiness，不影响变更账**。
+            ignore:
+              - milieu-state.json
+              - STATE.md
           # 会话指纹保留：最近 1 天 ∪ 最近 5 条
           fingerprint:
             keepDays: 1

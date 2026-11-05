@@ -59,6 +59,24 @@ export function fileFingerprint(file, fs) {
 }
 
 /**
+ * 上一份基准是不是**旧格式**（文件条目都没有内容指纹）？
+ *
+ * 2026-11-02 修：`buildEntries` 以前组装条目时把 `hash` 丢了，旧基准里文件条目全是 null。
+ * 拿它跟新表比 → 要么把**全部文件误报成 changed**（null ≠ md5），要么按旧逻辑同大小变化漏报。
+ * 旧基准不能判"变没变"，所以**整份当首轮基线重建一次**：这一轮不产事件，下一轮开始正常比。
+ *
+ * 判据："**有**文件条目、且这些文件条目**全部**缺指纹"才算旧格式。
+ * 为什么不是"任一为 null"：只有个别文件指纹为 null，是那个文件当时读不到（权限等），
+ * 按"任一"会让一个不可读文件导致**每轮都重建基准**，变更账就永远不工作了。
+ * 目录/整棵合计本来就没有指纹，不参与判断。
+ */
+function isLegacyPrev(entries) {
+  const fileEntries = Object.values(entries || {}).filter((e) => e && e.kind !== 'dir');
+  if (fileEntries.length === 0) return false;
+  return fileEntries.every((e) => typeof e.hash !== 'string' || !e.hash);
+}
+
+/**
  * **直接扫工作区**（不依赖 `tools/manifest.md`）。
  *
  * 2026-10-19 修：状态生成曾经读清单当文件表，清单不在就直接放弃——于是**全新工作区没有清单，
@@ -98,17 +116,40 @@ export function listWorkspaceFiles(root, cfg = {}, fs) {
   return out;
 }
 
-/** 目录：整棵合计字节 + 里面最新 mtime（**不列子文件**）。 */
-export function subtreeAggregate(dir, fs) {
+/** 归一忽略表：`/` 分隔、去首尾斜杠；相对被扫的那个目录。坏输入当没有。 */
+function normalizeIgnorePaths(ignore) {
+  return (Array.isArray(ignore) ? ignore : [])
+    .map((s) => String(s || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, ''))
+    .filter(Boolean);
+}
+
+/**
+ * 目录：整棵合计字节 + 里面最新 mtime（**不列子文件**）。
+ *
+ * `options.ignore`（可选）：**相对被扫目录**的文件/子树路径，命中的**不 stat、不计数**。
+ * 为什么加它（2026-11 readiness bug）：`evaluateReadiness` 拿这棵合计当"认知库长得怎么样"，
+ * 而插件自己每轮都在写 `milieu-state.json` / `STATE.md`——不排掉的话，插件越勤快，
+ * 认知库看起来就"越在长"，readiness 永远不达标，预加载永远不建。
+ * **旧调用不带第三参时行为一字不变**（`ignore` 为空 = 不忽略）。
+ *
+ * @param {string} dir 目录绝对路径
+ * @param {object} fs  文件系统能力（必需；本层不 import 'node:fs'）
+ * @param {{ignore?: string[]}} [options] 见上
+ */
+export function subtreeAggregate(dir, fs, options = {}) {
+  const ignore = normalizeIgnorePaths(options && options.ignore);
+  const isIgnored = (rel) => ignore.some((p) => rel === p || rel.startsWith(p + '/'));
   let size = 0;
   let newest = null;
   let files = 0;
-  const walk = (current) => {
+  const walk = (current, relDir) => {
     let entries;
     try { entries = fs.readDir(current); } catch { return; }
     for (const entry of entries) {
+      const rel = relDir ? relDir + '/' + entry.name : entry.name;
+      if (isIgnored(rel)) continue; // 插件自己的产物：不进 readiness 的口径
       const full = join(current, entry.name);
-      if (entry.isDirectory()) { walk(full); continue; }
+      if (entry.isDirectory()) { walk(full, rel); continue; }
       try {
         const st = fs.stat(full);
         size += st.size;
@@ -117,7 +158,7 @@ export function subtreeAggregate(dir, fs) {
       } catch { /* 读不到的跳过 */ }
     }
   };
-  walk(dir);
+  walk(dir, '');
   return { size, mtime: newest, files };
 }
 
@@ -129,7 +170,8 @@ export function subtreeAggregate(dir, fs) {
  *   · fs       文件系统能力（必需；本层不 import 'node:fs'）
  *   · now      生成时间（毫秒）
  *   · criteria 宿主编译层传进来的判据覆盖
- * @returns {object} 报告（含 `state` / `prev` 两份**准备写出去的内容**）
+ * @returns {object} 报告：`state` / `prev` 是两份**准备写出去的内容**；`freshEvents` 是这一轮
+ *   新产生的事件数组（`fresh` 是它的计数；监控拿它写 `.dsh-milieu/changes.jsonl` 原始日志）。
  */
 export function generateState(o = {}) {
   const {
@@ -138,7 +180,7 @@ export function generateState(o = {}) {
     now = Date.now(),
     criteria: overrideCriteria,
   } = o;
-  const empty = { ok: false, reason: '', fresh: 0, bounded: null, derived: null, firstRun: false };
+  const empty = { ok: false, reason: '', fresh: 0, freshEvents: [], bounded: null, derived: null, firstRun: false };
   if (!root) return { ...empty, reason: '没有工作区根', code: CODES.CONFIG_INVALID, blockedBy: 'config' };
   if (!fs) return { ...empty, reason: '没有文件系统能力（fs），不能扫描工作区', code: CODES.FS_UNAVAILABLE, blockedBy: 'fs' };
 
@@ -198,6 +240,9 @@ export function generateState(o = {}) {
       prev = raw && raw.version === PREV_VERSION && raw.entries ? raw.entries : null;
     } catch { prev = null; }
   }
+  // 旧格式基准（文件条目没有指纹）不能用来判"变没变"：当首轮重建一次基线。
+  // 不这样处理，升级后第一次扫描会把全部文件报成 changed（或按旧逻辑漏报同大小改动）。
+  if (prev && isLegacyPrev(prev)) prev = null;
   const firstRun = prev === null;
 
   // ⑤ 老事件（窗口里留着的）+ 这一轮新产生的
@@ -209,8 +254,10 @@ export function generateState(o = {}) {
     } catch { return emptyState(now, criteria); }
   })();
   const prevEvents = Array.isArray(oldState.events) ? oldState.events : [];
-  const fresh = diffEntries(prev, cur, firstRun);
-  const merged = [...fresh, ...prevEvents.filter((e) => !fresh.some((f) => f.path === e.path))];
+  // `freshEvents` 原样交给监控写原始日志（`.dsh-milieu/changes.jsonl`）；
+  // 状态文件里的 `events` 仍是**有界投影**，两者不是一回事。
+  const freshEvents = diffEntries(prev, cur, firstRun);
+  const merged = [...freshEvents, ...prevEvents.filter((e) => !freshEvents.some((f) => f.path === e.path))];
   const bounded = boundEvents(merged, now, cfg);
   const derived = project(bounded.events, libPaths);
 
@@ -236,7 +283,10 @@ export function generateState(o = {}) {
     root, libs: libPaths, cfg, criteria, source,
     statePath, prevPath,
     entries: cur, state, prev: prevNext,
-    fresh: fresh.length, bounded: bounded.events.length, archived: bounded.archived,
+    // `fresh` 是计数（旧的读法保留）；`freshEvents` 是这一轮的新事件数组（监控写原始日志用）。
+    fresh: freshEvents.length,
+    freshEvents,
+    bounded: bounded.events.length, archived: bounded.archived,
     derived, firstRun,
   };
 }

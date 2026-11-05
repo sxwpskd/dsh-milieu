@@ -4,13 +4,25 @@
 //   **把"工作区里哪些东西、什么时候、变了多少"记成一条有界的事件流；六个桶与计数是它的投影。**
 //
 // 分工（不要混）：
-//   · 判"变没变" → 比 **字节 + 指纹**（上一次的表）；
+//   · 判"变没变" → 比 **字节 + 指纹**（上一次的表；所以文件条目必须带 `hash`，
+//     否则同大小、内容不同的改动永远比不出来——2026-11-02 修的就是这个）；
 //   · 事件的**时间** → 扫描时现读的**文件 mtime（毫秒原值）**；
 //   · `manifest.md` 只给人看，**不参与判定**。
 //
 // 扫描范围（规范）：**认知库全递归**（每个文件一条）；**其它库只到一级**（文件夹按整棵求和、顶层文件按自身）；
 // 索引文件单独成条；`aggregateOnly` 里的目录只记整棵合计。
+//
+// 自产物（`isSelfArtifact`）：状态文件 / 上一份基准 / 宿主日志 / **原始变更日志**
+// （`core/change-log.js` 的 `RAW_LOG_REL`）都不算"工作区变了"——防"自己写 → 自己判变 → 自己写"的环。
+//
+// 注意：本文件会被**界面半边**打进 `lib/client.js`（`tools/build-client.mjs` 的 ORDER 里有它），
+// 所以这里**不能 import `core/change-log.js`**（那边 import 'node:path'，浏览器包里没有）。
+// 原始日志路径在这里只做**字面量比对**；路径契约的家在 `core/change-log.js`，
+// 由测试拿 `RAW_LOG_REL` 与 `isSelfArtifact` 对一遍钉住两处一致（见其注释）。
 import { DEFAULT_CRITERIA } from '../config/criteria.js';
+
+/** 原始变更日志的相对路径（**同上**：字面量与 `core/change-log.js` 的 RAW_LOG_REL 必须一致；测试钉住）。 */
+const RAW_LOG_ARTIFACT_REL = '.dsh-milieu/changes.jsonl';
 
 /** 事件类型。 */
 export const KINDS = ['created', 'changed', 'gone'];
@@ -27,14 +39,22 @@ export const CHANGE_DEFAULTS = {
 /**
  * **机制自己的产物**：它们永远不算"工作区变了"。
  *
- * 为什么必须有这张表（2026-10-14 咬过一次，journal/016）：本机制每次运行都会写这两个文件；
+ * 为什么必须有这张表（2026-10-14 咬过一次，journal/016）：本机制每次运行都会写这些文件；
  * 不排除的话，下一轮算差量时第一个"新增"就是**它自己**，而且**每轮都在给自己供料**——环自己转起来。
  * 排除**只影响判据**：清单里照旧记着它们（存在是事实）。
  *
  * 写成"库名 + 文件名"两段，避免把别处同名文件误伤。
+ *
+ * 2026-11-02 补 `STATE.md`（状态页）：它的**材料段是插件每轮刷新写的**（内容含生成时间），
+ * 不排除就会在"无变化不写状态文件"的策略下形成 60 秒一次的自喂环：
+ *   扫描 → 有变化 → 写状态文件 → 刷状态页（材料段变）→ 下轮扫到 STATE.md changed → 又写……
+ * 整页排除（判断段也不计入）是有意的：状态页是"状态的文件形态"，不是外部工作区事实；
+ * 判断段由 agent 写，也不该反过来触发"工作区变了 → 重读"。口径与 `criteria.readiness.ignore`
+ * 对同一文件的排除一致。
  */
 export const SELF_ARTIFACTS = [
   { lib: 'review', name: 'milieu-state.json' },
+  { lib: 'review', name: 'STATE.md' },          // 状态页（材料段插件写；防自喂环，见上）
   { lib: 'tools', name: '.milieu-state-prev.json' },
 ];
 
@@ -58,21 +78,34 @@ function isLogArtifact(rel) {
 export function isSelfArtifact(rel, libs = { review: 'review', tools: 'tools' }) {
   const p = String(rel || '').replace(/\\/g, '/');
   if (isLogArtifact(p)) return true;
+  // 原始变更日志（`core/change-log.js` 写、append-only）：同样是机制自己的产物。
+  // 正常扫描范围里它在 `.dsh-milieu/` 下、本来就不进条目表；这里再认一次是防"库配到根"
+  // 这类配置——一旦它进了事件流，就是每轮"新增"自己喂自己（2026-10-14 踩过同类环）。
+  if (p === RAW_LOG_ARTIFACT_REL) return true;
   return SELF_ARTIFACTS.some((a) => p === (libs[a.lib] || a.lib) + '/' + a.name);
 }
 
 const isUnder = (rel, prefix) => rel === prefix || rel.startsWith(prefix + '/');
 const topOf = (rel) => rel.split('/')[0];
 
+/** 文件条目的内容指纹（没有就 null——"不知道"不许冒充"没变"）。 */
+function hashOfFile(file) {
+  return typeof file.hash === 'string' && file.hash ? file.hash : null;
+}
+
 /**
  * 由清单里的文件表 + 排除子树统计，算出"要跟踪的条目表"。
  *
+ * ⚠ **文件条目必须带 `hash`**（2026-11-02 修）：`diffEntries` 一直按"字节 + 指纹"判变没变，
+ *   但本函数以前组装条目时把指纹丢了，于是 `a.hash === b.hash === undefined` 恒成立，
+ *   **同大小、内容不同的改动永远漏报**。现在文件条目带指纹、目录/整棵合计为 null。
+ *
  * @param {object} o
- *   · files       [{ rel, size, mtime }]（清单里的文件；rel 用 `/` 分隔）
+ *   · files       [{ rel, size, mtime, hash }]（扫描出的文件；rel 用 `/` 分隔）
  *   · libs        { review, tools, external }
  *   · excluded    [{ rel, size, mtime }]（被清单排除、只记整棵合计的子树）
  *   · cfg         CHANGE_DEFAULTS 形状
- * @returns {Object<string, {size:number, mtime:number|null, kind:'file'|'dir'}>}
+ * @returns {Object<string, {size:number, mtime:number|null, kind:'file'|'dir', hash:string|null}>}
  */
 export function buildEntries(o = {}) {
   const { files = [], libs, excluded = [], cfg = {} } = o;
@@ -87,12 +120,13 @@ export function buildEntries(o = {}) {
     if (!rel) continue;
     const size = Number(f.size) || 0;
     const mtime = typeof f.mtime === 'number' ? f.mtime : null;
+    const hash = hashOfFile(f);
 
     // ① 索引文件：单独成条（无论它在哪个库）
-    if (c.indexFiles.includes(rel)) { out[rel] = { size, mtime, kind: 'file' }; continue; }
+    if (c.indexFiles.includes(rel)) { out[rel] = { size, mtime, kind: 'file', hash }; continue; }
 
     // ② 递归库：每个文件一条
-    if (recursive.some((lib) => isUnder(rel, lib))) { out[rel] = { size, mtime, kind: 'file' }; continue; }
+    if (recursive.some((lib) => isUnder(rel, lib))) { out[rel] = { size, mtime, kind: 'file', hash }; continue; }
 
     // ③ 只到一级的库：顶层文件按自身，更深的折进它的一级文件夹
     const lib = firstLevelLibs.find((k) => isUnder(rel, libs[k]));
@@ -101,11 +135,14 @@ export function buildEntries(o = {}) {
     const parts = rest.split('/');
     const key = parts.length === 1 ? rel : libs[lib] + '/' + parts[0];
     const kind = parts.length === 1 ? 'file' : 'dir';
+    // 文件夹是整棵合计，没有单文件指纹（null）；顶层文件保留自己的。
+    const entryHash = kind === 'file' ? hash : null;
     const cur = out[key];
-    if (!cur) out[key] = { size, mtime, kind };
+    if (!cur) out[key] = { size, mtime, kind, hash: entryHash };
     else {
       if (kind === 'dir') cur.size += size;                       // 文件夹：整棵求和
       if (mtime !== null) cur.mtime = cur.mtime === null ? mtime : Math.max(cur.mtime, mtime);
+      if (entryHash && !cur.hash) cur.hash = entryHash;          // 防御：同 key 不同拼法
     }
   }
 
@@ -113,7 +150,7 @@ export function buildEntries(o = {}) {
   for (const ex of excluded) {
     const rel = String(ex.rel || '').replace(/\\/g, '/');
     if (!rel) continue;
-    out[rel] = { size: Number(ex.size) || 0, mtime: typeof ex.mtime === 'number' ? ex.mtime : null, kind: 'dir' };
+    out[rel] = { size: Number(ex.size) || 0, mtime: typeof ex.mtime === 'number' ? ex.mtime : null, kind: 'dir', hash: null };
   }
 
   return out;

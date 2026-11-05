@@ -3,12 +3,16 @@
 // 它是从 `index.js` 的 `apply()` 搬出来的业务主体（ARCHITECTURE.md §6.3）：
 //   ① 注册状态页 section（同步；注入文本惰性读）；
 //   ② 定工作区根（配置 > 平台工作区表 > cwd 兜底）；
-//   ③ 启动序列：挂日志文件 sink → 写协议 → 生成状态文件 → 刷新注入页材料段 → 安排预加载会话；
-//   ④ 拆解：把注册、计时器、fiber、agent 的清理交给框架。
+//   ③ 启动序列：挂日志文件 sink → 写协议 → **首扫工作区**（原始日志 / 状态文件 / 注入页）
+//      → 启动工作区监控与预加载监控（长期 effect，共享一条串行队列）；
+//   ④ 拆解：把注册、计时器、fiber、两个监控的清理交给框架。
 //
 // 日志（task-7 / LOG-SCHEMA.md v2）：
 //   · 关键事件用 `log.event(...)` 写结构化记录（`boot.start` / `boot.ready` / `protocol.sync(.failed)`
-//     / `state.generate(.failed)` / `state.page.refresh|skip` / `preload.create|skip|failed` / `error.caught`）；
+//     / `state.generate(.failed)` / `state.page.refresh|skip` / `error.caught`）；
+//   · 预加载的 `preload.create|skip|failed` 由 `core/preload-monitor.js` 在**状态变化**时写；
+//   · 工作区改动的 `state.generate` 由 `core/workspace-monitor.js` 只在"有变化/首轮/失败"时写
+//     （稳定态每 60 秒的扫描**不写日志**）；
 //   · 失败记录带稳定错误码（`exception/codes.js`）与 `blockedBy`；
 //   · **正常路径不逐文件刷**：一条记录代表一步，文件明细进 data/诊断文件；
 //   · 文件 sink 在**工作区根确定之后**才挂（启动早期没有工作区根）；挂载失败只报告，不影响主流程。
@@ -19,7 +23,7 @@
 // 设计纪律（框架 + 官方规范）：
 //   · 注册放进 `ctx.effect`，返回清理函数；
 //   · **不假设 API 存在**：查不到就跳过/报告，绝不抛错影响宿主启动；
-//   · **内容没变不重发 / 不重写**（指纹），省 token、少动用户文件；
+//   · **内容没变不重发 / 不重写**（指纹），省 token、少动用户文件；**没变化不写状态文件**；
 //   · 超预算**跳过**，不静默截断；
 //   · 写入**失败就报告**（不搞兜底机制）。
 import { join, resolve } from 'node:path';
@@ -29,7 +33,10 @@ import { pickWorkspaceRoot } from './root.js';
 import { syncProtocol } from './protocol.js';
 import { generateState, writeStateFile, summarize } from './state-generator.js';
 import { ensureStatePage, refreshStatePage } from './state-page.js';
-import { preloadSession } from './preload.js';
+import { appendChanges } from './change-log.js';
+import { createSerialQueue } from './run-queue.js';
+import { startPreloadMonitor } from './preload-monitor.js';
+import { startWorkspaceMonitor, reportScanResult } from './workspace-monitor.js';
 import { guardSync } from '../exception/guard.js';
 import { CODES } from '../exception/codes.js';
 import { workspaceKey } from '../utils/path.js';
@@ -170,67 +177,138 @@ function syncProtocolToWorkspace(cfg, root, fs, log) {
 }
 
 /**
- * **自动生成状态文件**（需求 R5 的地基；2026-10-16 加）。
+ * **扫描一次工作区**（对外导出：boot 首扫、`core/workspace-monitor.js` 的每轮都复用它）。
  *
  * 为什么必须有这一步：客户端判"工作区变没变"读的是状态文件，**它太旧就永远不提示**。
- * 所以会话开场扫一次：工作区真变了 → 重算、写状态文件；没变 → 不写。
+ * 链路（2026-11-02 定）：
+ *   generateState（算差量，含 freshEvents）
+ *   → **只有首轮或本轮有新事件**才：appendChanges（原始 append-only 日志）→ writeStateFile（状态文件）
+ *   → 条件刷新注入页材料段。
+ *   **没有变化时一个盘都不碰**——工作区监控每 60 秒扫一次，不能每 60 秒重写状态文件。
  *
- * **失败只报告，不兜底、不炸宿主**（清单还没跑过是常见情形，不是错误）。
- * 日志事件：`state.generate` / `state.generate.failed` 各一条。
+ * 纪律：失败只报告、不兜底、不抛；原始日志追加失败**不阻断**状态文件写。
+ * 日志不在这里写（由调用方用 `reportScanResult` 统一判定：稳定态不写、失败不静默）。
+ *
+ * @param {object} cfg 生效配置（withDefaults 之后）
+ * @param {string} root 工作区根
+ * @param {object} fs 文件系统能力（`adapter/fs.js`）
+ * @param {object} log 日志（refreshPage 里建骨架/写页面时用；可空）
+ * @returns {{ok:boolean, reason:string, summary:string, skipped:boolean, firstBoot:boolean,
+ *   firstRun:boolean, freshEvents:Array, changed:boolean, wroteState:boolean,
+ *   rawAppend:object|null, page:object|null, state:object|null, workspaceKey:string|null,
+ *   code?:string, blockedBy?:string, error?:Error}}
  */
-function refreshStateFile(cfg, root, fs, log) {
+export function scanWorkspaceNow(cfg, root, fs, log) {
   const wk = root ? workspaceKey(root) : null;
+  const base = {
+    ok: false,
+    reason: '',
+    summary: '',
+    skipped: false,
+    firstBoot: false,
+    firstRun: false,
+    freshEvents: [],
+    changed: false,
+    wroteState: false,
+    rawAppend: null,
+    page: null,
+    state: null,
+    workspaceKey: wk,
+  };
   try {
-    if (!root) return { ok: false, reason: '没有工作区根' };
+    if (!root) return { ...base, skipped: true, reason: '没有工作区根' };
     // `ensureLibs=false` 时不许为了写状态文件去造认知库目录（R3 的配置边界）。
     if (cfg.ensureLibs === false && !fs.exists(join(root, cfg.libs.review))) {
-      // 这是**配置边界导致的正常跳过**：不是失败，不写错误日志（summary 行会说明）。
-      return { ok: false, skipped: true, reason: '认知库目录不在（ensureLibs=false）' };
+      // 这是**配置边界导致的正常跳过**：不是失败，不写错误（boot.ready 的 summary 行会说明）。
+      return { ...base, skipped: true, reason: '认知库目录不在（ensureLibs=false）' };
     }
-    const report = generateState({ root, now: Date.now(), criteria: cfg.criteria, fs });
+
+    const now = Date.now();
+    const report = generateState({ root, now, criteria: cfg.criteria, fs });
     if (!report.ok) {
-      // **清单还没跑过**是装机后第一次的正常状态，不是错误 → 记 info；其余才算 error。
+      // **清单还没跑过**是装机后第一次的正常状态（老路径），不是错误 → 由调用方记 info。
       const isFirstBoot = String(report.reason || '').includes('清单不存在');
-      if (isFirstBoot) {
-        emit(log, 'state.generate', '[milieu] 状态文件先不生成（' + report.reason + '）', {
-          ok: true, workspaceKey: wk, data: { firstBoot: true },
-        });
-      } else {
-        emit(log, 'state.generate.failed', '[milieu] 状态文件没能生成：' + report.reason, {
-          ok: false,
-          code: report.code || CODES.STATE_SCAN_FAILED,
-          blockedBy: report.blockedBy || 'state',
-          workspaceKey: wk,
-        });
-      }
-      return { ok: false, reason: report.reason, firstBoot: isFirstBoot };
+      return {
+        ...base,
+        reason: report.reason,
+        firstBoot: isFirstBoot,
+        code: report.code,
+        blockedBy: report.blockedBy,
+      };
     }
+
+    const freshEvents = Array.isArray(report.freshEvents) ? report.freshEvents : [];
+    const firstRun = report.firstRun === true;
+    const changed = firstRun || freshEvents.length > 0;
+    const summary = summarize(report);
+
+    if (!changed) {
+      // **稳定态：不追加原始日志、不写状态文件**（否则每 60 秒写一次）。
+      // 唯一的例外是注入页还缺着一页（首装/被删）：补建一次，否则注入永远不工作。
+      let page = { ok: true, changed: false, reason: '没有变化，未刷新' };
+      const pagePath = join(root, cfg.libs.review, cfg.statePath);
+      if (cfg.injectState !== false && !fs.exists(pagePath)) {
+        page = refreshPage(cfg, report, root, fs, log);
+      }
+      return {
+        ...base, ok: true, reason: summary, summary, state: report.state, page,
+        firstRun: false, freshEvents: [], changed: false,
+      };
+    }
+
+    // ① 原始 append-only 日志（`.dsh-milieu/changes.jsonl`）。失败只报告，**不阻断**状态写。
+    let rawAppend = null;
+    try {
+      rawAppend = appendChanges({ root, events: freshEvents, fs, now });
+    } catch (err) {
+      // appendChanges 设计上不抛；这里再收一次，保证"原始日志坏了不拖垮状态文件"。
+      rawAppend = {
+        ok: false,
+        reason: String((err && err.message) || err),
+        code: CODES.STATE_WRITE_FAILED,
+        blockedBy: 'fs',
+      };
+    }
+
+    // ② 状态文件（有变化才写）。
     const written = writeStateFile(report, { fs });
     if (!written.ok) {
-      emit(log, 'state.generate.failed', '[milieu] 状态文件写入失败：' + written.reason, {
-        ok: false,
-        code: written.code || CODES.STATE_WRITE_FAILED,
-        blockedBy: written.blockedBy || 'fs',
-        workspaceKey: wk,
-      });
-      return { ok: false, reason: written.reason };
+      return {
+        ...base,
+        reason: written.reason,
+        summary,
+        code: written.code,
+        blockedBy: written.blockedBy,
+        firstRun,
+        freshEvents,
+        changed: true,
+        rawAppend,
+      };
     }
-    emit(log, 'state.generate', '[milieu] ' + summarize(report), {
+
+    // ③ 注入页材料段（扫描变了才刷；fail-open 在 refreshPage 里）。
+    const page = refreshPage(cfg, report, root, fs, log);
+    return {
+      ...base,
       ok: true,
-      workspaceKey: wk,
-      data: { fresh: report.fresh, bounded: report.bounded, firstRun: !!report.firstRun },
-    });
-    return { ok: true, reason: summarize(report), state: report.state };
+      reason: summary,
+      summary,
+      state: report.state,
+      firstRun,
+      freshEvents,
+      changed: true,
+      wroteState: true,
+      rawAppend,
+      page,
+    };
   } catch (err) {
-    const reason = String((err && err.message) || err);
-    emit(log, 'state.generate.failed', '[milieu] 状态文件生成抛错：' + reason, {
-      ok: false,
+    return {
+      ...base,
+      reason: String((err && err.message) || err),
       code: CODES.STATE_SCAN_FAILED,
       blockedBy: 'state',
-      workspaceKey: wk,
       error: err instanceof Error ? err : undefined,
-    });
-    return { ok: false, reason };
+    };
   }
 }
 
@@ -396,123 +474,125 @@ function bootInner({ host, fs, log, config, attachFileSink } = {}) {
         ? syncProtocolToWorkspace(cfg, root, fs, log)
         : { ok: true, changed: false, reason: '配置里关了（writeProtocol=false）', wrote: [] };
 
-      // ② **自动生成状态文件**（会话开场扫一次）——客户端判"变没变"读的就是它。
-      //    失败只报告（清单还没跑过是常见情形，不是错误）。
-      const stateRun = cfg.autoState
-        ? refreshStateFile(cfg, root, fs, log)
-        : { ok: true, skipped: true, reason: '配置里关了（autoState=false）' };
+      // **串行队列**（一个插件 / 一个工作区一份）：预加载监控与工作区监控都往这里排队，
+      // 避免两边同时读-改-写 `milieu-state.json` 时互相覆盖（预加载刚登记的受管会话可能被扫描写回旧表）。
+      const serial = createSerialQueue();
 
-      // ②b **顺手刷新注入页的材料段**（首装还会先建骨架）。
-      //    只动 `<!-- judgement -->` 以下；判断段一字不动；没标记的页面不碰。
+      // ② **启动首扫**（客户端判"变没变"读的就是它；之后由工作区监控长期接棒）。
+      //    链路见 `scanWorkspaceNow`：有变化才追加原始日志 + 写状态文件 + 刷注入页；
+      //    稳定态一个盘都不碰。失败只报告（清单还没跑过是常见情形，不是错误）。
+      const stateRun = cfg.autoState
+        ? scanWorkspaceNow(cfg, root, fs, log)
+        : {
+          ok: true, skipped: true, reason: '配置里关了（autoState=false）',
+          firstRun: false, freshEvents: [], changed: false, wroteState: false, page: null,
+        };
+      // 首扫的日志按老行为"如实报一条"；之后每轮扫描由 monitor 只在变化/失败时写。
+      if (cfg.autoState) reportScanResult(log, stateRun, { workspaceKey: wk, initial: true });
+
+      // ②b 注入页结果：有变化时已在扫描里刷新；无变化时沿用上次（boot.ready 如实说明）。
       const pageRun = cfg.autoState
-        ? refreshPage(cfg, stateRun, root, fs, log)
+        ? (stateRun.page || (stateRun.ok
+          ? { ok: true, changed: false, reason: '没有变化，未刷新' }
+          : { ok: false, changed: false, reason: '状态扫描失败，未刷新' }))
         : { ok: false, changed: false, reason: '配置里关了（autoState=false）' };
 
-      // ③ 保证这个工作区**有一条已经读过的预加载会话**（需求 R4 / M5）。
+      // ③ **工作区改动监控**（长期 effect：turn/end 去抖 + workspacePollMs 定时兜底）。
+      //    只跟 `autoState` 走——**与 `preloadSession` 无关**（预加载关着也要跟踪工作区变化）。
+      if (cfg.autoState) {
+        let workspaceMonitor = null;
+        guardSync('启动工作区监控', () => {
+          workspaceMonitor = startWorkspaceMonitor({
+            host,
+            scan: () => scanWorkspaceNow(cfg, root, fs, log),
+            criteria: cfg.criteria,
+            log,
+            enqueue: serial.enqueue,
+          });
+        }, { optional: true, log: guardLog, code: CODES.HOST_CALL_FAILED, blockedBy: 'host' });
+        disposers.push(() => {
+          if (workspaceMonitor) {
+            try { workspaceMonitor.stop(); } catch { /* 卸载期停止失败不反噬宿主 */ }
+            workspaceMonitor = null;
+          }
+        });
+      }
+
+      // ④ 预加载会话：**挂载后的长期 effect**（需求 R4 / M5）——不是"启动时算一次"。
       //
-      // 💥 2026-10-18 真机事故：启动期直接建 agent → 宿主崩
+      // 为什么必须等就绪（2026-10-18 真机事故）：启动期直接建 agent → 宿主崩
       //    （`no agent factory registered (load an agent-loop plugin)` → `fatal load failure`）。
       //    根因：Agent 创建由 `dsh-agent-loop` 的 **AgentLoop 服务**提供，工厂在它的**构造函数**里注册；
-      //    我们这一行比它早就绪时，工厂还不存在。
+      //    我们比它早就绪时工厂还不存在。正解：`ctx.inject([...], cb)` —— "等服务就绪后再执行"。
       //
-      // ✅ 正解（2026-10-18 查 Cordis 源码后定）：用 **`ctx.inject([...], cb)`**——
-      //    "等服务就绪后再执行"。cb 跑的时候 AgentLoop 已经构造过 → 工厂一定在 → 建会话必然可用。
-      //    **自动**：一次配置，之后每次启动都自己检查（已有就不再建）。
+      // 为什么是长期 effect（2026-10-31）：以前算完一次就结束，用户真用了预加载会话之后，
+      //    插件要等**下次重启**才发现"该毕业 / 该补一条 / 受管表不是恰好一条"。
+      //    现在交给 `core/preload-monitor.js`：初始一次 + `turn/end` 去抖 + 低频定时兜底；
+      //    它的日志只在状态变化时写，稳定态不刷屏。它与工作区监控**共享 `serial` 队列**。
+      //
+      // 兜底保留：某些组合里会话服务是懒实例化的，`ctx.inject` 可能一直不来——
+      //    10 秒后（`agentLoopWaitMs`）用父 ctx 启一次；失败只进日志/诊断，不在加载期炸。
       if (cfg.preloadSession) {
-        let handle = null;
-        let cancelled = false;
-        let ran = false;
-        const run = (subHost) => {
-          if (cancelled || ran) return;
-          ran = true;
-          // 异步边界：preloadSession 自己已包 guardAsync（永不 reject）；这里再收一次"调度时同步抛"。
-          const scheduled = guardSync('预加载会话调度', () => preloadSession({
-            host: subHost, fs, root,
-            libs: cfg.libs, texts: cfg.texts, criteria: cfg.criteria,
-          }), {
-            optional: false,
-            log: null, // 失败由下面的 result 事件报一次（带 code），不在这里重复
-            code: CODES.SESSION_CREATE_FAILED,
-            blockedBy: 'host',
-          });
-          void Promise.resolve(scheduled).then((result) => guardSync('预加载会话结果', () => {
-            if (cancelled) return;
-            if (result && result.handle) handle = result.handle;
-            if (result && result.ok) {
-              if (result.created) {
-                emit(log, 'preload.create', '[milieu] ' + result.reason + '：' + (result.sessionId || '（没有 id）'), {
-                  ok: true, workspaceKey: wk, sessionId: result.sessionId, data: { didRead: !!result.didRead },
-                });
-              } else {
-                emit(log, 'preload.skip', '[milieu] ' + result.reason, {
-                  ok: true, workspaceKey: wk, sessionId: result.sessionId,
-                });
-              }
-            } else if (result && result.readiness && result.readiness.ready === false) {
-              // readiness 不达标是**正常跳过**（不是错误）：info 级，带原因。
-              emit(log, 'preload.skip', '[milieu] ' + (result.reason || '认知库没到预加载门槛'), {
-                ok: false, workspaceKey: wk, data: { reason: 'readiness' },
-              });
-            } else if (result && result.code) {
-              // 边界归一出来的意外失败（guard 已捕获，这里只报一次结构化记录）。
-              emit(log, 'error.caught', '[milieu] 预加载会话意外失败：' + String(result.reason || '未知原因'), {
-                level: 'error',
-                ok: false,
-                code: result.code,
-                blockedBy: result.blockedBy,
-                workspaceKey: wk,
-                sessionId: result.sessionId,
-                error: causeOf(result),
-              });
-            } else {
-              emit(log, 'preload.failed', '[milieu] 预加载会话没能建起来：' + String((result && result.reason) || '未知原因'), {
-                ok: false,
-                code: CODES.SESSION_CREATE_FAILED,
-                blockedBy: 'session',
-                workspaceKey: wk,
-                sessionId: result && result.sessionId,
-                data: { retryable: !!(result && result.retryable) },
-              });
-            }
-          }, { optional: true, log: guardLog, code: CODES.HOST_CALL_FAILED }))
-            .catch((err) => guardSync('预加载会话异常', () => {
-              emit(log, 'error.caught', '[milieu] 预加载会话抛错：' + String((err && err.message) || err), {
-                level: 'error', ok: false, code: CODES.SESSION_CREATE_FAILED, blockedBy: 'session',
-                workspaceKey: wk, error: err instanceof Error ? err : undefined,
-              });
-            }, { optional: true, log: guardLog, code: CODES.HOST_CALL_FAILED }));
-        };
+        let monitor = null;
+        let monitorSource = ''; // 'inject'（服务就绪的正路 ctx）| 'fallback'（父 ctx 兜底）
         let fiber = null;
         let fallbackTimer = null;
+        let disposed = false;
+        /**
+         * 启动监控。**一个工作区一份**，但兜底启动的那份可以被正路替换：
+         * 父 ctx 可能拿不到会话服务（兜底只是"服务始终没就绪"时的最后手段），
+         * 一旦 `ctx.inject` 的回调真的来了，必须用回调里的 scoped host 重启——
+         * 否则"兜底先跑"会把监控锁在一个能力不全的 ctx 上。
+         * `guardSync` 收掉"调度时同步抛"：宿主回调 / 定时器里抛错会被平台算成致命加载失败。
+         */
+        const startMonitor = (subHost, source) => {
+          if (disposed || !subHost) return;
+          if (monitor) {
+            if (source !== 'inject' || monitorSource !== 'fallback') return; // 不重复启动
+            const stale = monitor;
+            monitor = null;
+            monitorSource = '';
+            try { stale.stop(); } catch { /* 旧监控停不下来也不能挡住新监控 */ }
+          }
+          monitor = startPreloadMonitor({
+            host: subHost, fs, root,
+            libs: cfg.libs, texts: cfg.texts, criteria: cfg.criteria, log,
+            enqueue: serial.enqueue, // 与工作区监控串行（避免同时写状态文件）
+          });
+          monitorSource = source;
+        };
         try {
           if (host.canInject()) {
             // 宿主回调里**不许抛**：回调抛错会变成宿主侧的错误（可能是致命的），这里收一次。
-            fiber = host.awaitPreload((subHost) => guardSync('预加载调度回调', () => run(subHost), {
+            fiber = host.awaitPreload((subHost) => guardSync('预加载监控挂载', () => startMonitor(subHost, 'inject'), {
               optional: true, log: guardLog, code: CODES.HOST_CALL_FAILED, blockedBy: 'host',
             }));
           } else {
             warn(host.labels.noInject);
           }
-          // **兜底**：若服务始终没就绪（某些组合里会话服务是懒实例化的），
-          //   10 秒后用父 ctx 再试一次——attach/unarchive 不依赖工厂，只有起 agent 才需要。
-          //   失败只会写进 `.dsh-milieu/preload.json`，不会崩（定时器回调里，不在加载期）。
-          fallbackTimer = setTimeout(() => guardSync('预加载兜底定时器', () => { if (!ran) run(host); }, {
+          // **兜底**：只有服务始终没就绪时才用父 ctx 启一次；正路回调后来仍可替换它。
+          //   失败只会写进日志 / `.dsh-milieu/preload.json`，不会崩（定时器回调里，不在加载期）。
+          fallbackTimer = setTimeout(() => guardSync('预加载兜底启动', () => {
+            if (!monitor) startMonitor(host, 'fallback');
+          }, {
             optional: true, log: guardLog, code: CODES.HOST_CALL_FAILED, blockedBy: 'host',
           }), cfg.criteria.agentLoopWaitMs);
+          if (fallbackTimer && typeof fallbackTimer.unref === 'function') fallbackTimer.unref();
         } catch (err) {
           warn(host.labels.waitSessionFailed + '：' + String((err && err.message) || err));
         }
         disposers.push(() => {
-          cancelled = true;
+          disposed = true; // 之后即使 inject 回调才来，也不会再启动一个监控
           if (fallbackTimer !== null) clearTimeout(fallbackTimer);
           try { if (fiber && typeof fiber.dispose === 'function') fiber.dispose(); } catch { /* 释放失败不吞宿主 */ }
-          if (handle && typeof handle.dispose === 'function') {
-            try { Promise.resolve(handle.dispose()).catch(() => { /* 同上 */ }); } catch { /* 同上 */ }
+          if (monitor) {
+            try { monitor.stop(); } catch { /* 卸载期停止失败不反噬宿主 */ }
+            monitor = null;
           }
         });
       }
 
-      // ④ 启动时如实报告处境：**注册上了几个扩展点、协议写没写进去，绝不假装成功**
+      // ⑤ 启动时如实报告处境：**注册上了几个扩展点、协议写没写进去，绝不假装成功**
       //    这一条同时是 `boot.ready` 事件（结构化字段进文件；人话保持旧日志文本不变）。
       const where = registered > 0
         ? '已注册 ' + registered + ' 个扩展点（' + host.labels.extensionPoints + '）'
@@ -523,7 +603,11 @@ function bootInner({ host, fs, log, config, attachFileSink } = {}) {
         '[milieu] 工作区=' + root + '（' + rootSource + '），三库=' + cfg.libs.review + '/' + cfg.libs.tools + '/' + cfg.libs.external +
         '，状态文件=' + cfg.statePath +
         '，协议写入工作区=' + (cfg.writeProtocol ? (proto.ok ? (proto.changed ? '已同步' : '已是最新') : '失败：' + proto.reason) : '关') +
-        '，状态文件=' + (cfg.autoState ? (stateRun.ok ? '已生成' : (stateRun.firstBoot ? '等清单' : '失败：' + stateRun.reason)) : '关') +
+        '，状态文件=' + (cfg.autoState
+          ? (stateRun.ok
+            ? (stateRun.wroteState ? '已生成' : '无变化（未写）')
+            : (stateRun.skipped ? '跳过（' + stateRun.reason + '）' : (stateRun.firstBoot ? '等清单' : '失败：' + stateRun.reason)))
+          : '关') +
         '，注入页=' + (pageRun.ok ? (pageRun.changed ? '已刷新' : '已是最新') : '未动（' + pageRun.reason + '）') +
         '，预加载会话=' + (cfg.preloadSession ? '开' : '关') +
         '，' + where,
