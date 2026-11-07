@@ -16,9 +16,19 @@ const FALLBACK_READ = '这个浮球没有拿到读状态文件的函数（接线
 
 /**
  * 浮球 + 面板。
+ *
+ * **React 组件签名是 `(props)`**：调用方通过 `React.createElement(MilieuSettingsBall, { React, … })`
+ * 渲染它，React 只传 props。历史上这里写成 `(React, props)` 工厂签名，真实渲染时第一个参数
+ * 收到的是 props、`React` 是 undefined → `React.useState is not a function`（2026-11-07 真机 Console
+ * 抓到；离线测试直接调用工厂所以没发现）。
+ *
+ * @param props.React 浏览器模块表给的 React
  * @param props.readState 异步函数 → `{ ok, criteria, generatedAt, workspaceKey, reason }`
  */
-export function MilieuSettingsBall(React, props) {
+export function MilieuSettingsBall(props) {
+  const React = props && props.React;
+  // 真实宿主一定有 React；缺了/形状不对时**不要调用 hooks**（会造成 hook 顺序错误），直接不渲染。
+  if (!React || typeof React.createElement !== 'function' || typeof React.useState !== 'function') return null;
   const e = React.createElement;
   const readState = props && props.readState;
   const [open, setOpen] = React.useState(false);

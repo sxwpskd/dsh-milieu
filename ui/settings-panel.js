@@ -25,12 +25,19 @@ export function flattenCriteria(criteria) {
 
 /**
  * 只读面板。
+ *
+ * **React 组件签名是 `(props)`**（同 `settings-ball.js` 的更正在 2026-11-07 一并修掉）：
+ * 它由 `React.createElement(MilieuSettingsPanel, { React, … })` 渲染，React 只传 props。
+ *
+ * @param props.React 浏览器模块表给的 React
  * @param props.data  `{ ok, criteria, generatedAt, workspaceKey, reason }`
  * @param props.loading 是否正在读
  * @param props.onRefresh 重新读
  * @param props.onClose 关闭
  */
-export function MilieuSettingsPanel(React, props) {
+export function MilieuSettingsPanel(props) {
+  const React = props && props.React;
+  if (!React || typeof React.createElement !== 'function') return null;
   const e = React.createElement;
   const { data, loading, onRefresh, onClose } = props || {};
   const ok = !!(data && data.ok);

@@ -376,12 +376,19 @@ function buildPage(React, props) {
 
 /**
  * 行配置页组件：本地草稿 + 保存。
- * @param {object} React 浏览器模块表给的 React（离线测试用假 React）
- * @param {object} props 页面宿主传入：`{ t, view, form }`
+ *
+ * **React 组件签名是 `(props)`**：`ConfigPageView` 用
+ * `React.createElement(MilieuConfigPage, { React, ...props })` 渲染它；React 只传 props。
+ * 历史上这里写成 `(React, props)` 工厂签名，真机会把 props 当 React → hooks 全挂
+ * （2026-11-07 真机 Console 抓到；离线测试直接调用工厂所以没发现）。
+ *
+ * @param props.React 浏览器模块表给的 React（离线测试用假 React）
+ * @param props.t / props.view / props.form 页面宿主传入
  *   测试口子：`__testDraft`（覆盖草稿值，模拟用户输入）、`__onState`（每次状态变化回调，测试观察）
  */
-export function MilieuConfigPage(React, props) {
-  if (!React || typeof React.createElement !== 'function') return null;
+export function MilieuConfigPage(props) {
+  const React = props && props.React;
+  if (!React || typeof React.createElement !== 'function' || typeof React.useState !== 'function') return null;
 
   // hooks 无条件执行（不能在 early return 之后），保证组件多次渲染顺序一致。
   const form = props && props.form;
