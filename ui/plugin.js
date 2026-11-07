@@ -58,6 +58,38 @@ export const CLIENT_INJECT = ['slots', 'sessions', 'remote', 'remote.workspaceFi
  * @param {object} deps { React, ctx, bootId? }
  *   · `bootId` 可选：客户端一般拿不到宿主 bootId；给了合法的（8 位小写字母/数字）就带进日志。
  */
+const CLIENT_JOURNAL_KEY = 'dsh-milieu:client-journal:v1';
+const CLIENT_JOURNAL_LIMIT = 200;
+
+/** 读客户端持久日志（localStorage；刷新/重启后还在）。坏数据当空。 */
+export function readClientJournal(limit = 20) {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    const parsed = JSON.parse(localStorage.getItem(CLIENT_JOURNAL_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.slice(-Math.max(1, limit)) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 客户端日志的第二个 sink：localStorage 环形缓冲（页面刷新后仍能看，不写工作区文件）。 */
+function createJournalSink() {
+  return {
+    write(_line, record) {
+      try {
+        if (typeof localStorage === 'undefined' || !record) return false;
+        const previous = JSON.parse(localStorage.getItem(CLIENT_JOURNAL_KEY) || '[]');
+        const rows = Array.isArray(previous) ? previous : [];
+        rows.push(record);
+        localStorage.setItem(CLIENT_JOURNAL_KEY, JSON.stringify(rows.slice(-CLIENT_JOURNAL_LIMIT)));
+        return true;
+      } catch {
+        return false; // 配额/隐私模式：不反噬主流程
+      }
+    },
+  };
+}
+
 export function createClientPlugin({ React, ctx, bootId }) {
   // 客户端自己记的"这条会话弹过了"——只活在页面里，不进工作区。
   let shownMemory = {};
@@ -72,11 +104,12 @@ export function createClientPlugin({ React, ctx, bootId }) {
   //     并**保持原有宿主 logger 输出**（既有可见行为不变）；
   //   · 关键事件（card.* / ui.read.failed / error.caught）走结构化 `clientLogger.event`。
   const memorySink = createMemorySink();
+  const journalSink = createJournalSink();
   const clientLogger = createLogger({
     side: 'client',
     bootId: typeof bootId === 'string' && BOOT_ID_RE.test(bootId) ? bootId : undefined,
     module: 'ui.plugin',
-    sinks: [memorySink],
+    sinks: [memorySink, journalSink],
   });
 
   const log = (level, msg) => {
@@ -156,7 +189,10 @@ export function createClientPlugin({ React, ctx, bootId }) {
    * 只读：这里没有写回通道；写回要接官方 settings / Config schema（W3）。
    */
   async function readSettingsState() {
-    const text = await stateReader.read(null);
+    // 浮球没有 session 作用域；workspaceFiles 用**当前主会话**的工作区解析路径。
+    // 传 null 会让 Host 找不到授权 Session（2026-11-07 真机：读不到生效判据）。
+    const currentSessionId = currentMainSessionId(sessionsOf());
+    const text = await stateReader.read(currentSessionId);
     if (!text) return { ok: false, reason: '读不到状态文件（宿主可能还没生成）' };
     const parsed = parseState(text);
     if (!parsed) return { ok: false, reason: '状态文件解析失败（内容不是合法的 milieu-state）' };
@@ -181,7 +217,11 @@ export function createClientPlugin({ React, ctx, bootId }) {
    */
   function ConfigPageView(props) {
     return React.createElement(ConfigBoundary, null,
-      React.createElement(MilieuConfigPage, { React, ...props }));
+      React.createElement(MilieuConfigPage, {
+        React,
+        clientLogs: () => readClientJournal(30),
+        ...props,
+      }));
   }
 
   /**
