@@ -242,7 +242,10 @@ export function scanWorkspaceNow(cfg, root, fs, log) {
 
     const freshEvents = Array.isArray(report.freshEvents) ? report.freshEvents : [];
     const firstRun = report.firstRun === true;
-    const changed = firstRun || freshEvents.length > 0;
+    const criteriaChanged = report.criteriaChanged === true;
+    // 判据变了也要写状态文件（供客户端的悬浮球/卡片读生效值），
+    // 但它不是“工作区变了”，不产生 freshEvents、不额外追加原始日志。
+    const changed = firstRun || freshEvents.length > 0 || criteriaChanged;
     const summary = summarize(report);
 
     if (!changed) {

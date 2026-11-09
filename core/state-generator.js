@@ -254,6 +254,13 @@ export function generateState(o = {}) {
     } catch { return emptyState(now, criteria); }
   })();
   const prevEvents = Array.isArray(oldState.events) ? oldState.events : [];
+  // 配置里的判据也可以变（配置页保存 / profile 重载）。状态文件里的 `criteria`
+  // 是客户端的生效值：变了就要写一次，哪怕工作区文件一个都没变——否则悬浮球会一直
+  // 显示上一轮启动时的旧值（2026-11-09 真机：配置页 6 分钟、悬浮球 1 天）。
+  const previousCriteria = oldState && oldState.criteria && typeof oldState.criteria === 'object'
+    ? oldState.criteria
+    : null;
+  const criteriaChanged = JSON.stringify(previousCriteria) !== JSON.stringify(criteria);
   // `freshEvents` 原样交给监控写原始日志（`.dsh-milieu/changes.jsonl`）；
   // 状态文件里的 `events` 仍是**有界投影**，两者不是一回事。
   const freshEvents = diffEntries(prev, cur, firstRun);
@@ -287,7 +294,7 @@ export function generateState(o = {}) {
     fresh: freshEvents.length,
     freshEvents,
     bounded: bounded.events.length, archived: bounded.archived,
-    derived, firstRun,
+    derived, firstRun, criteriaChanged,
   };
 }
 
