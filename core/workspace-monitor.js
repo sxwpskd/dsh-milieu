@@ -327,6 +327,17 @@ export function startWorkspaceMonitor(o = {}) {
     disposeListener = o.host && typeof o.host.onSessionEvent === 'function'
       ? o.host.onSessionEvent((session, event) => {
         if (!event || event.type !== 'turn/end') return;
+        // 记录“这条会话本轮结束”的基线：下一轮扫描把它写进受管会话表，
+        // 客户端只统计基线之后的变化，避免把会话自己改的文件当成“外部改动”。
+        if (typeof o.onTurnEnd === 'function') {
+          try {
+            const sessionId = session && (session.id || session.sessionId)
+              ? String(session.id || session.sessionId)
+              : (event.data && typeof event.data.sessionId === 'string' ? event.data.sessionId : null);
+            const at = typeof event.time === 'number' && event.time > 0 ? event.time : Date.now();
+            if (sessionId) o.onTurnEnd({ sessionId, at });
+          } catch { /* 基线记录失败不能挡住扫描 */ }
+        }
         scheduleDebouncedRun();
       })
       : null;

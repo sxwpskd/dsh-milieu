@@ -9,6 +9,7 @@
 //   · 读文件 → `client.js`（用现成的 workspaceFiles Remote）。
 import { shouldPromptOnReturn, evaluateInvalidation, PROMPT_THRESHOLD_MS, normalizeChangeIndex } from '../core/criteria.js';
 import { parseState, hasChanges, changeTotals, managedIds } from '../core/state.js';
+import { project } from '../core/changes.js';
 import { DEFAULT_CRITERIA } from '../config/criteria.js';
 
 /** 客户端自己记的"这条会话弹过了"（**只活在页面里**，不进工作区）。 */
@@ -76,12 +77,20 @@ export function shouldShowCard(currentSessionId, stateText, memory, opts = {}) {
   // ③ 一次只提示一次
   if (alreadyShown(memory, currentSessionId)) return NO('这一轮已经提示过了');
 
+  // **会话 turn 基线**：这条会话自己本轮里改的文件，对它来说已经读过了。
+  // 只统计 `lastTurnEnd` 之后的事件；没有基线的旧会话退回全量（兼容旧状态）。
+  const sessionEntry = (state.managedSessions || []).find((entry) => entry.sessionId === currentSessionId);
+  const lastTurnEnd = sessionEntry && typeof sessionEntry.lastTurnEnd === 'number' ? sessionEntry.lastTurnEnd : null;
+  const changeIndex = lastTurnEnd === null
+    ? state.changeIndex
+    : project((state.events || []).filter((event) => !(typeof event.time === 'number' && event.time <= lastTurnEnd)), state.libs).changeIndex;
+
   // ④ 没变就什么都没有
-  if (!hasChanges(state.changeIndex)) return NO('工作区没有变化');
+  if (!hasChanges(changeIndex)) return NO('工作区没有变化');
 
   // ⑤ 变化够不够大：先用 normalizeChangeIndex **归一**，再交给 core/criteria.js 的判据。
   //    这一步曾经漏掉过——两套字段名让"有变化"变成了"没变化"，自测当场抓住。
-  const flat = normalizeChangeIndex(state.changeIndex);
+  const flat = normalizeChangeIndex(changeIndex);
   const inv = evaluateInvalidation(flat, null, criteria);
   if (!inv.prompt) return NO(inv.reason);
 
@@ -89,5 +98,5 @@ export function shouldShowCard(currentSessionId, stateText, memory, opts = {}) {
   const gate = shouldPromptOnReturn(activityAt, flat, now, thresholdMs);
   if (!gate.prompt) return NO(gate.reason);
 
-  return { show: true, reason: gate.reason, changeIndex: state.changeIndex, totals: changeTotals(state.changeIndex) };
+  return { show: true, reason: gate.reason, changeIndex, totals: changeTotals(changeIndex) };
 }

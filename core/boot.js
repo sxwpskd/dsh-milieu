@@ -201,7 +201,7 @@ function syncProtocolToWorkspace(cfg, root, fs, log) {
  *   rawAppend:object|null, page:object|null, state:object|null, workspaceKey:string|null,
  *   code?:string, blockedBy?:string, error?:Error}}
  */
-export function scanWorkspaceNow(cfg, root, fs, log) {
+export function scanWorkspaceNow(cfg, root, fs, log, opts = {}) {
   const wk = root ? workspaceKey(root) : null;
   const base = {
     ok: false,
@@ -227,7 +227,7 @@ export function scanWorkspaceNow(cfg, root, fs, log) {
     }
 
     const now = Date.now();
-    const report = generateState({ root, now, criteria: cfg.criteria, fs });
+    const report = generateState({ root, now, criteria: cfg.criteria, fs, turnEnd: opts.turnEnd });
     if (!report.ok) {
       // **清单还没跑过**是装机后第一次的正常状态（老路径），不是错误 → 由调用方记 info。
       const isFirstBoot = String(report.reason || '').includes('清单不存在');
@@ -243,9 +243,10 @@ export function scanWorkspaceNow(cfg, root, fs, log) {
     const freshEvents = Array.isArray(report.freshEvents) ? report.freshEvents : [];
     const firstRun = report.firstRun === true;
     const criteriaChanged = report.criteriaChanged === true;
-    // 判据变了也要写状态文件（供客户端的悬浮球/卡片读生效值），
-    // 但它不是“工作区变了”，不产生 freshEvents、不额外追加原始日志。
-    const changed = firstRun || freshEvents.length > 0 || criteriaChanged;
+    const turnEndChanged = report.turnEndChanged === true;
+    // 判据变了 / 会话 turn 基线变了也要写状态文件（供客户端的悬浮球/卡片读），
+    // 但它们不是“工作区变了”，不产生 freshEvents、不额外追加原始日志。
+    const changed = firstRun || freshEvents.length > 0 || criteriaChanged || turnEndChanged;
     const summary = summarize(report);
 
     if (!changed) {
@@ -514,10 +515,16 @@ function bootInner({ host, fs, log, config, attachFileSink } = {}) {
       //    只跟 `autoState` 走——**与 `preloadSession` 无关**（预加载关着也要跟踪工作区变化）。
       if (cfg.autoState) {
         let workspaceMonitor = null;
+        let pendingTurnEnd = null;
         guardSync('启动工作区监控', () => {
           workspaceMonitor = startWorkspaceMonitor({
             host,
-            scan: () => scanWorkspaceNow(cfg, root, fs, log),
+            scan: () => {
+              const turnEnd = pendingTurnEnd;
+              pendingTurnEnd = null;
+              return scanWorkspaceNow(cfg, root, fs, log, { turnEnd });
+            },
+            onTurnEnd: (turnEnd) => { pendingTurnEnd = turnEnd; },
             criteria: cfg.criteria,
             log,
             enqueue: serial.enqueue,

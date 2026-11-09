@@ -179,6 +179,7 @@ export function generateState(o = {}) {
     fs = null,
     now = Date.now(),
     criteria: overrideCriteria,
+    turnEnd = null,
   } = o;
   const empty = { ok: false, reason: '', fresh: 0, freshEvents: [], bounded: null, derived: null, firstRun: false };
   if (!root) return { ...empty, reason: '没有工作区根', code: CODES.CONFIG_INVALID, blockedBy: 'config' };
@@ -253,6 +254,21 @@ export function generateState(o = {}) {
       return raw && raw.stateVersion === STATE_VERSION ? raw : emptyState(now, criteria);
     } catch { return emptyState(now, criteria); }
   })();
+  // **会话自己的 turn 基线**：agent 在本轮里改的文件，对这条会话来说是“已经读过”的；
+  // 只有 turn 结束之后工作区再变，才值得提醒重读（2026-11-09 真机）。
+  let managedSessions = normalizeManagedSessions(oldState.managedSessions);
+  let turnEndChanged = false;
+  if (turnEnd && typeof turnEnd.sessionId === 'string' && typeof turnEnd.at === 'number' && turnEnd.at > 0) {
+    const index = managedSessions.findIndex((entry) => entry.sessionId === turnEnd.sessionId);
+    if (index >= 0) {
+      const previous = managedSessions[index].lastTurnEnd || 0;
+      if (turnEnd.at > previous) {
+        managedSessions = managedSessions.slice();
+        managedSessions[index] = { ...managedSessions[index], lastTurnEnd: turnEnd.at };
+        turnEndChanged = true;
+      }
+    }
+  }
   const prevEvents = Array.isArray(oldState.events) ? oldState.events : [];
   // 配置里的判据也可以变（配置页保存 / profile 重载）。状态文件里的 `criteria`
   // 是客户端的生效值：变了就要写一次，哪怕工作区文件一个都没变——否则悬浮球会一直
@@ -275,7 +291,7 @@ export function generateState(o = {}) {
     workspaceKey: workspaceKey(root),
     libs: libPaths,
     criteria,
-    managedSessions: normalizeManagedSessions(oldState.managedSessions),
+    managedSessions,
     events: bounded.events,
     archived: (oldState.archived || 0) + bounded.archived,
     changeIndex: derived.changeIndex, // **投影**（不是另算一份）
@@ -294,7 +310,7 @@ export function generateState(o = {}) {
     fresh: freshEvents.length,
     freshEvents,
     bounded: bounded.events.length, archived: bounded.archived,
-    derived, firstRun, criteriaChanged,
+    derived, firstRun, criteriaChanged, turnEndChanged,
   };
 }
 

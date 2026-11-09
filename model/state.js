@@ -12,7 +12,8 @@ import { STATE_VERSION, ROLES } from '../constant/state.js';
 //   "generatedAt": 1791800000000,
 //   "workspaceKey": "d:/work",
 //   "libs": { "review": "review", "tools": "tools", "external": "external" },
-//   "managedSessions": [ { "sessionId": "…", "role": "preload", "source": "preload" } ],
+//   "managedSessions": [ { "sessionId": "…", "role": "preload", "source": "preload",
+//                          "lastTurnEnd": 1791700000000 } ],
 //   "events": [ { "path": "review/a.md", "kind": "changed", "time": 1791700000000,
 //                 "before": 1024, "after": 1144, "delta": 120 } ],   // **唯一事实**
 //   "archived": 0,                                                   // 有界：更早的压掉了多少条
@@ -89,6 +90,11 @@ export function normalizeManagedSessions(list) {
       role: ROLES.includes(raw.role) ? raw.role : 'active',
       source: typeof raw.source === 'string' && raw.source ? raw.source : null,
     };
+    // 会话最近一次 `turn/end` 的时间。客户端用它过滤“本会话自己改出来的变化”：
+    // turn 内 agent 改的文件不算“会话之后工作区变了”（2026-11-09 主人指出）。
+    if (typeof raw.lastTurnEnd === 'number' && Number.isFinite(raw.lastTurnEnd) && raw.lastTurnEnd > 0) {
+      entry.lastTurnEnd = raw.lastTurnEnd;
+    }
     if (at.has(id)) out[at.get(id)] = entry;      // 后来者覆盖同 id 的旧条目
     else { at.set(id, out.length); out.push(entry); }
   }
