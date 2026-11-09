@@ -99,6 +99,36 @@ export const FIELD_GROUPS = [
   },
 ];
 
+/** 中文显示名（悬浮球面板和配置页共用；键是拍平后的 path）。 */
+export const FIELD_LABELS = Object.freeze({
+  'criteria.structuralThreshold': '结构变化阈值（新增 + 消失，个文件）',
+  'criteria.contentThreshold': '内容变化阈值（改动，个文件）',
+  'criteria.staleHintDays': '陈旧提示天数（天）',
+  'criteria.promptThresholdMs': '弹卡时间门槛（毫秒）',
+  'criteria.preloadIdleMs': '预加载空闲毕业（毫秒）',
+  'criteria.preloadPollMs': '预加载对账轮询（毫秒）',
+  'criteria.workspacePollMs': '工作区扫描间隔（毫秒）',
+  'criteria.readiness.minFiles': '认知库最少文件数（个）',
+  'criteria.readiness.minBytes': '认知库最少字节数（字节）',
+  'criteria.readiness.windowMs': '认知库观察窗（毫秒）',
+  'criteria.readiness.maxGrowthRate': '窗内新增速度上限（比例 0–1）',
+  'criteria.readiness.maxChangedRatio': '窗内变动占比上限（比例 0–1）',
+  'criteria.readiness.ignore': '不计入认知库门槛的文件',
+  'criteria.fingerprint.keepDays': '指纹保留天数（天）',
+  'criteria.fingerprint.keepRecent': '指纹保留最近条数（条）',
+  'criteria.eventKeepDays': '事件流保留天数（天）',
+  'criteria.eventKeepCount': '事件流保留条数（条）',
+  'criteria.staleDays': '陈旧视图天数（天）',
+  'criteria.staleMaxReview': '陈旧视图最多列条数（条）',
+  'criteria.clientMemoryLimit': '客户端记忆上限（条）',
+  'criteria.pollMs': '客户端轮询间隔（毫秒）',
+  'criteria.readTimeoutMs': '读状态超时（毫秒）',
+  'criteria.debug': '调试行',
+  'criteria.agentLoopWaitMs': '等 agentLoop 兜底（毫秒）',
+  'preloadSession': '预加载会话',
+  'autoState': '自动生成状态文件',
+});
+
 /**
  * 数值字段的显示单位。值统一存原值（毫秒/天/条/字节/比例），
  * 页面在输入框后显示单位，并在“当前”列给出人话换算。
@@ -535,7 +565,7 @@ function buildPage(React, props) {
   parts.push(e(React, 'div', { style: styles.card, key: 'diagnostics' }, ...diagChildren));
 
   if (props.__wsOpen) {
-    parts.push(e(MilieuWorkspaceDialog, {
+    parts.push(e(React, MilieuWorkspaceDialog, {
       React,
       useWorkspaces: props.useWorkspaces,
       selected: props.__wsSelected || [],

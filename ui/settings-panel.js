@@ -8,7 +8,20 @@
 // 纪律同 `ui/card.js`：只 import React（调用方传入）；样式只用 `--dsw-alias-*` / 间距 token；
 //   工厂无副作用；不写 DOM、不动 document.body；数据从 props 来。
 
-/** 嵌套对象拍平成 "readiness.minFiles" 这样的行；数组/对象值用 JSON 显示。 */
+import { FIELD_LABELS, FIELD_UNITS, formatCurrentValue } from './config-page.js';
+
+/** 浮球面板里的时间显示（宿主写的是 epoch ms）。 */
+function formatTime(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return String(value || '（未记录）');
+  try {
+    return new Date(n).toLocaleString('zh-CN', { hour12: false });
+  } catch {
+    return String(n);
+  }
+}
+
+/** 嵌套对象拍平成中文行；数组/对象值用 JSON 显示。 */
 export function flattenCriteria(criteria) {
   const rows = [];
   const walk = (value, prefix) => {
@@ -17,7 +30,13 @@ export function flattenCriteria(criteria) {
       return;
     }
     if (typeof value === 'undefined') return;
-    rows.push([prefix, Array.isArray(value) ? JSON.stringify(value) : String(value)]);
+    const full = 'criteria.' + prefix;
+    const label = FIELD_LABELS[full] || FIELD_LABELS[prefix] || prefix;
+    const unit = FIELD_UNITS[full] || '';
+    const shown = Array.isArray(value)
+      ? JSON.stringify(value)
+      : formatCurrentValue({ path: prefix.split('.'), unit }, value);
+    rows.push([label, shown]);
   };
   walk(criteria || {}, '');
   return rows;
@@ -85,7 +104,7 @@ export function MilieuSettingsPanel(props) {
         '读不到生效判据：' + String((data && data.reason) || (loading ? '读取中…' : '未知原因')))
     : e('div', null,
         e('div', { style: { color: 'var(--dsw-alias-label-tertiary, #666)', marginBottom: '4px' } },
-          '工作区 ' + String(data.workspaceKey || '（未记录）') + ' · 生成于 ' + String(data.generatedAt || '（未记录）')),
+          '工作区 ' + String(data.workspaceKey || '（未记录）') + ' · 生成于 ' + formatTime(data.generatedAt)),
         e('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           e('tbody', null,
             rows.length
