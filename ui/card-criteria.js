@@ -43,13 +43,13 @@ const NO = (reason) => ({ show: false, reason });
  *   ② **这一轮已经弹过就不弹**（"只提示一次"）；
  *   ③ 工作区**确实变了**（没变就"什么都没有"）；
  *   ④ 变化**够不够大**：结构（新增+消失）≥ `structuralThreshold`，或内容（改动）≥ `contentThreshold`；
- *   ⑤ **距这条会话最后活动 ≥ `promptThresholdMs`**（core/criteria.js 的 `shouldPromptOnReturn`）。
+ *   ⑤ **距这条会话最后一次对话结束 ≥ `promptThresholdMs`**（core/criteria.js 的 `shouldPromptOnReturn`）。
  *
  * 第 ④ 关就是"重读阈值"的另一半：**不只是时间，还要变化数量够**。
- * 第 ⑤ 关的基准是**这条会话自己的活动时间**（平台会话列表里的"最后更新时间"），
- * **不是**我们另记的"上次读"。理由（主人 2026-10-16，收成判据）：
- *   **只在用会话，改动基本可以忽略**——用户在使用中能接受的改动，AI 自然也能接受；
- *   会话搁置了才需要提醒"变了，要不要重读"。
+ * 第 ⑤ 关的基准语义（主人 2026-11-10 确认）：
+ *   · 有这条会话的"最后一次对话结束时间" → 从**它**起算；
+ *   · 没有（旧会话还没跑过 turn/end）→ 退回平台会话列表的"最后活动时间"。
+ *   以前只从"用户最后一次发消息"起算；长回合结束时可能立刻弹卡，语义错了。
  *
  * @param {string} currentSessionId 当前正在看的会话 id
  * @param {string} stateText 状态文件原文（客户端读到的字符串）
@@ -94,8 +94,9 @@ export function shouldShowCard(currentSessionId, stateText, memory, opts = {}) {
   const inv = evaluateInvalidation(flat, null, criteria);
   if (!inv.prompt) return NO(inv.reason);
 
-  // ⑥ 时间够不够久：距这条会话最后活动 ≥ 阈值。
-  const gate = shouldPromptOnReturn(activityAt, flat, now, thresholdMs);
+  // ⑥ 时间够不够久：**从最后一次对话结束起算**；旧会话没有结束时间才退回最后活动时间。
+  const gateAt = lastTurnEnd !== null ? lastTurnEnd : activityAt;
+  const gate = shouldPromptOnReturn(gateAt, flat, now, thresholdMs);
   if (!gate.prompt) return NO(gate.reason);
 
   return { show: true, reason: gate.reason, changeIndex, totals: changeTotals(changeIndex) };
