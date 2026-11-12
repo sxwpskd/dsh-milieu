@@ -96,11 +96,28 @@ DSH 页面右下角有一个 **⚙ 浮球**：点开只读面板，显示 `milie
 只碰这四处：
 
 - `AGENTS.md`：**只维护**托管段（`<!-- dsh-milieu:begin … -->` 到 `<!-- dsh-milieu:end -->` 之间）；段外一个字不动；
-- `.dsh-milieu/`：协议三份（DEFINITION / SUGGESTIONS / RATIONALE）+ `preload.json` 诊断 + `milieu.log` 日志（及 `.log.1` / `.log.2` 轮转）+ `changes.jsonl` 原始变更日志（只追加）；
+- `.dsh-milieu/`：协议三份（DEFINITION / SUGGESTIONS / RATIONALE）+ `preload.json` 诊断 + `milieu.log` 日志（及 `.log.1` / `.log.2` 轮转）+ `changes.jsonl` 原始变更日志（只追加）+ `side-effects.json` 卸载台账；
 - 三个库目录（`review/` `tools/` `external/`）：**缺就建目录，不铺内容**；
 - 认知库里的 `STATE.md`：缺就建**状态页骨架**；只重写 `<!-- judgement -->` 以下的材料段。
 
-**卸载插件不会撤销这些文件**：协议是写给工作区的，不是插件的私有数据；插件走了，工作区仍按协议运转。要撤销就手动删托管段、`.dsh-milieu/` 或库目录。
+## 卸载（先撤回，再卸插件）
+
+插件在运行时会记一份**副作用台账**（`.dsh-milieu/side-effects.json`），卸载前可以先撤回插件留下的运行痕迹：
+
+```powershell
+# 先停插件（完全退出 DSH）；默认只看会动什么
+node <包目录>\uninstall\withdraw.mjs --root <工作区> --dry-run
+
+# 确认后真撤：状态文件、缓存、日志、AGENTS.md 托管段、STATE.md 材料段
+node <包目录>\uninstall\withdraw.mjs --root <工作区> --apply
+
+# 连协议文件一起撤（默认保留协议）
+node <包目录>\uninstall\withdraw.mjs --root <工作区> --apply --all
+```
+
+默认**保留协议三件**（`.dsh-milieu/DEFINITION/SUGGESTIONS/RATIONALE`）和 `AGENTS.md` 段外内容；`STATE.md` 只撤材料段，判断段保留。细节见 [uninstall/README.md](uninstall/README.md)。
+
+> **宿主 profile 的配置行 / `node_modules` junction 不归插件撤**：那是 DSH 插件管理器的卸载行为，插件代码在卸载后已不存在。需要时由宿主或用户清掉。
 
 ## 配置
 

@@ -12,7 +12,7 @@
 //   这样上游 `normalizeError(err)` 能拿到分类，而 `String(err.message)` 的文案一字不变。
 import {
   readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync,
-  readdirSync, statSync, rmSync, renameSync,
+  readdirSync, statSync, rmSync, renameSync, rmdirSync,
 } from 'node:fs';
 import { CODES } from '../exception/codes.js';
 
@@ -77,6 +77,8 @@ export function createFs() {
     size: call((path) => statSync(path).size, CODES.FS_READ_FAILED),
     /** 删除文件（不存在不算错：`force:true`；目录不在此列——目录删除是别的责任）。 */
     remove: call((path) => rmSync(path, { force: true }), CODES.FS_WRITE_FAILED),
+    /** 删除**空目录**（非空会抛；卸载撤回用，调用方自己判断空）。 */
+    removeDir: call((path) => rmdirSync(path), CODES.FS_WRITE_FAILED),
     /** 改名（Windows 上目标已存在会失败——调用方负责先删目标）。 */
     rename: call((from, to) => renameSync(from, to), CODES.FS_WRITE_FAILED),
   };

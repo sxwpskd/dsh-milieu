@@ -85,8 +85,8 @@ export function applyChild(ctx, rawConfig) {
      * 工作区根确定后才挂文件 sink（启动早期没有工作区根，见 LOG-SCHEMA §6.1）。
      * 报告口用**宿主 logger 原通道**：此时文件日志可能已经坏了，不能再经过日志链。
      */
-    const attachFileSink = (root) => fileSink.attach(createFileSink({
-      fs,
+    const attachFileSink = (root, sinkFs = fs) => fileSink.attach(createFileSink({
+      fs: sinkFs,
       root,
       report: (reason) => {
         const message = '[milieu] 日志文件写不进去（已停用文件日志）：' + reason;

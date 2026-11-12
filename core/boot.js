@@ -43,6 +43,8 @@ import { guardSync } from '../exception/guard.js';
 import { CODES } from '../exception/codes.js';
 import { workspaceKey } from '../utils/path.js';
 import { workspaceSectionName, sectionMatchesRoot } from './section-name.js';
+import { createLedger } from '../uninstall/ledger.js';
+import { createTrackedFs, seedKnownArtifacts } from '../uninstall/record.js';
 
 /** 兜底 order：拿不到官方分区顺序时用（数值只求稳定，不求精确）。 */
 const FALLBACK_ORDER = 500;
@@ -469,10 +471,20 @@ function bootInner({ host, fs, log, config, attachFileSink } = {}) {
       if (started) return;
       started = true;
 
-      // ⓪ **日志落盘**：工作区根确定之后才挂文件 sink（启动早期没有工作区根）。
-      //    挂载失败只是没有文件日志（含 sink 自己内部禁用的情形）——不阻断主流程。
+      // ⓪ **副作用台账 + 日志落盘**：工作区根确定后先建台账，再用**记录版 fs** 包住所有写操作。
+      //    台账坏了不能让插件不工作——降级为不记录（撤回时会说“没有台账”）。
+      let trackedFs = fs;
+      try {
+        const ledger = createLedger({ root, fs, plugin: 'dsh-milieu' });
+        seedKnownArtifacts({ ledger, fs, root, libs: cfg.libs, statePath: cfg.statePath });
+        trackedFs = createTrackedFs({ fs, ledger, root, libs: cfg.libs, statePath: cfg.statePath });
+      } catch (err) {
+        warn('副作用台账不可用（本次不记录卸载痕迹）：' + String((err && err.message) || err));
+      }
+
+      // 日志 sink 也用记录版 fs：这样日志文件本身也在台账里（撤回时一起收）。
       if (typeof attachFileSink === 'function') {
-        guardSync('挂载日志文件 sink', () => attachFileSink(root), {
+        guardSync('挂载日志文件 sink', () => attachFileSink(root, trackedFs), {
           optional: true,
           log: guardLog,
           code: CODES.FS_WRITE_FAILED,
@@ -485,7 +497,7 @@ function bootInner({ host, fs, log, config, attachFileSink } = {}) {
 
       // ① **先把协议写进工作区**（声源在这里；写失败就报告，不兜底）。
       const proto = cfg.writeProtocol
-        ? syncProtocolToWorkspace(cfg, root, fs, log)
+        ? syncProtocolToWorkspace(cfg, root, trackedFs, log)
         : { ok: true, changed: false, reason: '配置里关了（writeProtocol=false）', wrote: [] };
 
       // **串行队列**（一个插件 / 一个工作区一份）：预加载监控与工作区监控都往这里排队，
@@ -496,7 +508,7 @@ function bootInner({ host, fs, log, config, attachFileSink } = {}) {
       //    链路见 `scanWorkspaceNow`：有变化才追加原始日志 + 写状态文件 + 刷注入页；
       //    稳定态一个盘都不碰。失败只报告（清单还没跑过是常见情形，不是错误）。
       const stateRun = cfg.autoState
-        ? scanWorkspaceNow(cfg, root, fs, log)
+        ? scanWorkspaceNow(cfg, root, trackedFs, log)
         : {
           ok: true, skipped: true, reason: '配置里关了（autoState=false）',
           firstRun: false, freshEvents: [], changed: false, wroteState: false, page: null,
@@ -522,7 +534,7 @@ function bootInner({ host, fs, log, config, attachFileSink } = {}) {
             scan: () => {
               const turnEnd = pendingTurnEnd;
               pendingTurnEnd = null;
-              return scanWorkspaceNow(cfg, root, fs, log, { turnEnd });
+              return scanWorkspaceNow(cfg, root, trackedFs, log, { turnEnd });
             },
             onTurnEnd: (turnEnd) => { pendingTurnEnd = turnEnd; },
             criteria: cfg.criteria,
@@ -575,7 +587,7 @@ function bootInner({ host, fs, log, config, attachFileSink } = {}) {
             try { stale.stop(); } catch { /* 旧监控停不下来也不能挡住新监控 */ }
           }
           monitor = startPreloadMonitor({
-            host: subHost, fs, root,
+            host: subHost, fs: trackedFs, root,
             libs: cfg.libs, texts: cfg.texts, criteria: cfg.criteria, log,
             enqueue: serial.enqueue, // 与工作区监控串行（避免同时写状态文件）
           });

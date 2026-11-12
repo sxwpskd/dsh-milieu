@@ -1,5 +1,36 @@
 # 更新日志
 
+## 0.1.2 — 2026-11-12
+
+### 1. 重大改动
+
+- **新增 `uninstall/` 卸载层**：运行时副作用台账 + `withdraw` 撤回，解决“插件卸载后工作区里还留着状态/日志/托管段”的问题。
+- **默认保留协议**：普通撤回只收插件运行痕迹；协议三件和 `AGENTS.md` 段外内容保留。要连协议一起撤，必须显式 `--all`。
+- **默认 dry-run**：先报告会动什么，确认后 `--apply` 才改盘；成功后删台账，重复跑是空操作。
+
+### 2. 具体行为
+
+- 台账写到 `.dsh-milieu/side-effects.json`，路径相对工作区根，撤回时做根内校验，禁止目录穿越。
+- 记录 `created / modified / removed`，并保存修改前原文作为 `backup`。
+- `AGENTS.md` 只撤托管段；`STATE.md` 只撤材料段，判断段保留（有旧材料则还原旧材料）。
+- 插件私有文件（状态文件、`.milieu-state-prev.json`、日志、变更日志、`preload.json`）直接撤。
+- 首次启用新版本时，`seedKnownArtifacts()` 会认领旧版本已存在的已知产物（不递归猜用户文件）。
+
+### 3. 使用
+
+```powershell
+node <包目录>\uninstall\withdraw.mjs --root <工作区> --dry-run
+node <包目录>\uninstall\withdraw.mjs --root <工作区> --apply
+node <包目录>\uninstall\withdraw.mjs --root <工作区> --apply --all
+```
+
+详见 [uninstall/README.md](uninstall/README.md)。
+
+### 4. 发布注意
+
+- **撤回必须在卸载插件之前跑**；卸载后包已删除，`withdraw.mjs` 不再可执行。
+- **宿主 profile 的配置行和 `node_modules` junction 不归这一层管**：这是 DSH 插件管理器的卸载残留，插件代码在卸载后已不存在；需要时由宿主/用户清理。
+
 ## 0.1.1 — 2026-11-12
 
 相对 0.1.0。
