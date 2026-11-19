@@ -63,6 +63,17 @@ export const FIELD_GROUPS = [
       { path: ['preloadSession'], label: 'preloadSession（预加载会话）', kind: 'boolean' },
       { path: ['criteria', 'preloadIdleMs'], label: 'preloadIdleMs（空闲多久算用完了）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'preloadPollMs'], label: 'preloadPollMs（对账轮询间隔）', kind: 'number', integer: true, min: 0 },
+      { path: ['criteria', 'agentLoopWaitMs'], label: 'agentLoopWaitMs（等 agentLoop 的兜底）', kind: 'number', integer: true, min: 0 },
+    ],
+  },
+  {
+    title: '预加载门槛（认知库）',
+    fields: [
+      { path: ['criteria', 'readiness', 'minFiles'], label: 'readiness.minFiles（认知库最少文件数）', kind: 'number', integer: true, min: 0 },
+      { path: ['criteria', 'readiness', 'minBytes'], label: 'readiness.minBytes（认知库最少字节数）', kind: 'number', integer: true, min: 0 },
+      { path: ['criteria', 'readiness', 'windowMs'], label: 'readiness.windowMs（观察窗）', kind: 'number', integer: true, min: 0 },
+      { path: ['criteria', 'readiness', 'maxGrowthRate'], label: 'readiness.maxGrowthRate（窗内新增速度上限）', kind: 'number', min: 0, max: 1 },
+      { path: ['criteria', 'readiness', 'maxChangedRatio'], label: 'readiness.maxChangedRatio（窗内变动占比上限）', kind: 'number', min: 0, max: 1 },
     ],
   },
   {
@@ -81,11 +92,11 @@ export const FIELD_GROUPS = [
       { path: ['criteria', 'staleHintDays'], label: 'staleHintDays（多久算陈旧）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'staleDays'], label: 'staleDays（超过只给文件名）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'staleMaxReview'], label: 'staleMaxReview（陈旧视图最多列几条）', kind: 'number', integer: true, min: 0 },
-      { path: ['criteria', 'readiness', 'minFiles'], label: 'readiness.minFiles（认知库最少文件数）', kind: 'number', integer: true, min: 0 },
-      { path: ['criteria', 'readiness', 'minBytes'], label: 'readiness.minBytes（认知库最少字节数）', kind: 'number', integer: true, min: 0 },
-      { path: ['criteria', 'readiness', 'windowMs'], label: 'readiness.windowMs（观察窗）', kind: 'number', integer: true, min: 0 },
-      { path: ['criteria', 'readiness', 'maxGrowthRate'], label: 'readiness.maxGrowthRate（窗内新增速度上限）', kind: 'number', min: 0, max: 1 },
-      { path: ['criteria', 'readiness', 'maxChangedRatio'], label: 'readiness.maxChangedRatio（窗内变动占比上限）', kind: 'number', min: 0, max: 1 },
+    ],
+  },
+  {
+    title: '状态与客户端',
+    fields: [
       { path: ['criteria', 'fingerprint', 'keepDays'], label: 'fingerprint.keepDays（指纹保留天数）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'fingerprint', 'keepRecent'], label: 'fingerprint.keepRecent（指纹保留最近几条）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'eventKeepDays'], label: 'eventKeepDays（事件流保留天数）', kind: 'number', integer: true, min: 0 },
@@ -93,7 +104,6 @@ export const FIELD_GROUPS = [
       { path: ['criteria', 'clientMemoryLimit'], label: 'clientMemoryLimit（客户端记忆上限）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'pollMs'], label: 'pollMs（客户端轮询间隔）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'readTimeoutMs'], label: 'readTimeoutMs（读状态文件超时）', kind: 'number', integer: true, min: 0 },
-      { path: ['criteria', 'agentLoopWaitMs'], label: 'agentLoopWaitMs（等 agentLoop 的兜底）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'debug'], label: 'debug（卡片调试行）', kind: 'boolean' },
     ],
   },
