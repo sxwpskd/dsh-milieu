@@ -33,6 +33,9 @@ export const DEFAULT_CONFIG = {
   // 打开后是**挂载后的长期 effect**（初始一次 + `turn/end` 去抖 + `criteria.preloadPollMs`
   // 低频兜底），对账在 `core/preload.js`，调度与日志在 `core/preload-monitor.js`。
   preloadSession: false,
+  // **预加载会话模式**：DSH agent preset id（`standard` / `cordis` 等）。
+  // **空 = 跟随平台默认**；只影响新建的预加载会话，已有会话保持原模式。
+  preloadAgentPreset: '',
   // **自动生成状态文件**（需求 R5 的地基）：会话开场扫一次工作区、产出事件流。
   // 默认开——它只做"只读扫描 + 写我们自己的状态文件"。
   autoState: true,

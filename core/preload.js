@@ -156,8 +156,9 @@ export function preloadSession(o = {}) {
  *   ② 没有可保留的会话 → 过 `evaluateReadiness`：不达标 → `readiness` 跳过（ok:true）；达标 → 建 + 发。
  *
  * @param {object} o
- *   · host / fs / root / libs / texts / now / criteria / log
+ *   · host / fs / root / libs / texts / now / criteria / agentPreset / log
  *   · readStateImpl / writeStateImpl / createAgent 注入点（测试与将来复用）
+ *   · `agentPreset`：新建预加载会话时透传给平台（空 = 跟随平台默认）；认领旧会话不改模式
  * @returns {Promise<object>} 固定形状，见 `report`
  */
 async function preloadSessionInner(o = {}) {
@@ -166,6 +167,7 @@ async function preloadSessionInner(o = {}) {
     libs = { review: 'review', tools: 'tools', external: 'external' },
     texts, now = Date.now(),
     criteria,
+    agentPreset,
     readStateImpl = (r, l) => readState(r, l, fs),
     writeStateImpl = (r, l, s) => writeState(r, l, s, fs),
     createAgent = (options) => host.agents.create(options),
@@ -575,7 +577,10 @@ async function preloadSessionInner(o = {}) {
     let un = { ok: false, reason: '未走到' };
     try {
       // 适配层把平台异常翻成 `{ok:false}`（不再抛）；失败就按建会话失败处理。
-      const createdResult = await host.session.create(workspaceId ? { workspaceId, sessionId } : { cwd: root, sessionId });
+      // **模式只在新会话上给**：空串 = 跟随平台默认，显式值 = DSH agent preset id。
+      const createReq = workspaceId ? { workspaceId, sessionId } : { cwd: root, sessionId };
+      if (typeof agentPreset === 'string' && agentPreset) createReq.agentPreset = agentPreset;
+      const createdResult = await host.session.create(createReq);
       if (createdResult && createdResult.ok === false) throw new Error(createdResult.reason);
       created = true;
       un = await host.workspace.unarchive(sessionId);
@@ -613,7 +618,7 @@ async function preloadSessionInner(o = {}) {
       }, 'create', { workspaceId });
     }
     try {
-      const res = await createAgent(buildAgentCreateOptions({ sessionId, cwd: root }));
+      const res = await createAgent(buildAgentCreateOptions({ sessionId, cwd: root, agentPreset }));
       if (res && res.ok === false) throw new Error(res.reason);
       created = true;
     } catch (err) {

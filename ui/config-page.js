@@ -15,7 +15,7 @@
 //     只有保存才写入；页面自己负责草稿与校验提示。
 //
 // 本步（配置页 2/3）：**只读展示 workspaces[]**（结构性配置，不产生写操作）；
-//   即时字段 `preloadSession` / `autoState` / `criteria` 可编辑（只生成 set 操作）；
+//   即时字段 `preloadSession` / `preloadAgentPreset` / `autoState` / `criteria` 可编辑（只生成 set 操作）；
 //   不改宿主 Config 语义、不写 profile 文件、不直接碰 `milieu-state.json`。
 //
 // 纪律：纯 React（`React` 由调用方传入）、不写 DOM、不 import Harness 客户端包、
@@ -50,10 +50,18 @@ export const CONFIG_PAGE_TEXT = {
   save: '保存',
 };
 
+/** 预加载会话模式：空 = 跟随平台默认；`standard` / `cordis` 是 DSH 的内置 agent preset id。 */
+export const PRELOAD_PRESET_OPTIONS = Object.freeze([
+  { value: '', label: '跟随平台默认' },
+  { value: 'standard', label: '标准模式（standard）' },
+  { value: 'cordis', label: '创造模式（cordis）' },
+]);
+
 /**
- * 可编辑字段（**只有 volatile 字段**：preloadSession / autoState / criteria 的标量）。
- * 每一项：`key`（草稿键）、`path`（mutate 的 path）、`label`、`kind`（boolean|number）、
+ * 可编辑字段（**只有 volatile 字段**：preloadSession / preloadAgentPreset / autoState / criteria 的标量）。
+ * 每一项：`key`（草稿键）、`path`（mutate 的 path）、`label`、`kind`（boolean|number|select）、
  * `integer` / `min` / `max` 是本地校验（Host 仍会校验完整 Config）。
+ * `select` 字段带 `options: [{ value, label }]`。
  * `workspaces` **不在这里**：它只读、永不生成写操作。
  */
 export const FIELD_GROUPS = [
@@ -61,6 +69,7 @@ export const FIELD_GROUPS = [
     title: '预加载',
     fields: [
       { path: ['preloadSession'], label: 'preloadSession（预加载会话）', kind: 'boolean' },
+      { path: ['preloadAgentPreset'], label: 'preloadAgentPreset（预加载会话模式）', kind: 'select', options: PRELOAD_PRESET_OPTIONS },
       { path: ['criteria', 'preloadIdleMs'], label: 'preloadIdleMs（空闲多久算用完了）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'preloadPollMs'], label: 'preloadPollMs（对账轮询间隔）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'agentLoopWaitMs'], label: 'agentLoopWaitMs（等 agentLoop 的兜底）', kind: 'number', integer: true, min: 0 },
@@ -136,6 +145,7 @@ export const FIELD_LABELS = Object.freeze({
   'criteria.debug': '调试行',
   'criteria.agentLoopWaitMs': '等 agentLoop 兜底（毫秒）',
   'preloadSession': '预加载会话',
+  'preloadAgentPreset': '预加载会话模式',
   'autoState': '自动生成状态文件',
 });
 
@@ -199,6 +209,12 @@ export function bytesText(bytes) {
 /** 字段当前值的显示文本（带单位/换算）。 */
 export function formatCurrentValue(field, value) {
   if (value === undefined || value === null) return '—';
+  if (field && field.kind === 'select') {
+    const options = Array.isArray(field.options) ? field.options : [];
+    const hit = options.find((option) => String(option.value) === String(value));
+    if (hit) return hit.label;
+    return value === '' ? '跟随平台默认' : String(value);
+  }
   if (typeof value !== 'number') return String(value);
   const unit = field && (field.unit || FIELD_UNITS[pathKey(field.path)]) ? (field.unit || FIELD_UNITS[pathKey(field.path)]) : '';
   if (unit === '毫秒') return value + ' 毫秒（' + durationText(value) + '）';
@@ -225,16 +241,25 @@ export function getPathValue(root, path) {
 /** 从 `form.state.value`（完整配置对象）取可编辑字段的基线值：`{ 草稿键: 值 }`。 */
 export function baselineOf(configValue) {
   const out = {};
-  for (const field of EDITABLE_FIELDS) out[field.key] = getPathValue(configValue, field.path);
+  for (const field of EDITABLE_FIELDS) {
+    let value = getPathValue(configValue, field.path);
+    // 选择字段的"空"是合法值（跟随平台默认），不能让 undefined 变成"改过"。
+    if (field.kind === 'select' && (value === undefined || value === null)) value = '';
+    out[field.key] = value;
+  }
   return out;
 }
 
-/** 从基线生成草稿（数字转字符串，布尔原样；页面输入框统一用字符串/布尔）。 */
+/** 从基线生成草稿（数字转字符串，布尔/选择原样；页面输入框统一用字符串/布尔）。 */
 export function draftOf(baseline) {
   const draft = {};
   for (const field of EDITABLE_FIELDS) {
     const base = baseline ? baseline[field.key] : undefined;
-    draft[field.key] = field.kind === 'boolean' ? base === true : (typeof base === 'number' ? String(base) : '');
+    draft[field.key] = field.kind === 'boolean'
+      ? base === true
+      : field.kind === 'select'
+        ? (typeof base === 'string' ? base : '')
+        : (typeof base === 'number' ? String(base) : '');
   }
   return draft;
 }
@@ -242,6 +267,11 @@ export function draftOf(baseline) {
 /** 解析一个字段的输入；不合法返回 `{ok:false, reason}`（页面据此显示校验提示、不提交）。 */
 export function parseField(field, raw) {
   if (!field || typeof field !== 'object') return { ok: false, reason: '未知字段' };
+  if (field.kind === 'select') {
+    // 空串是合法值（跟随平台默认）；非空也允许自定义 preset id（页面只列内置项）。
+    const text = raw === undefined || raw === null ? '' : String(raw).trim();
+    return { ok: true, value: text };
+  }
   if (field.kind === 'boolean') {
     if (raw === true || raw === 'true' || raw === 1) return { ok: true, value: true };
     if (raw === false || raw === 'false' || raw === 0 || raw === '') return { ok: true, value: false };
@@ -463,7 +493,9 @@ function shownValueOf(field, baseline, effectiveDraft) {
   const raw = Object.prototype.hasOwnProperty.call(effectiveDraft, key) ? effectiveDraft[key] : undefined;
   if (raw !== undefined && raw !== null) return raw;
   const base = baseline ? baseline[key] : undefined;
-  return field.kind === 'boolean' ? base === true : (typeof base === 'number' ? String(base) : '');
+  if (field.kind === 'boolean') return base === true;
+  if (field.kind === 'select') return base === undefined || base === null ? '' : String(base);
+  return typeof base === 'number' ? String(base) : '';
 }
 
 /** 组件主体：只负责把数据画出来；状态与保存都在 `MilieuConfigPage` 的 hooks 里。 */
@@ -527,12 +559,26 @@ function buildPage(React, props) {
       const shown = shownValueOf(field, baseline, effectiveDraft);
       const base = baseline[key];
       const invalid = diff.invalid.some((item) => item.key === key);
-      const inputProps = field.kind === 'boolean'
-        ? { type: 'checkbox', checked: shown === true, onChange: (ev) => onEdit && onEdit(field, !!(ev && ev.target ? ev.target.checked : false)), disabled: !writable }
-        : { type: 'number', value: String(shown), onChange: (ev) => onEdit && onEdit(field, ev && ev.target ? ev.target.value : ''), disabled: !writable, style: styles.input };
+      let control;
+      if (field.kind === 'select') {
+        control = e(React, 'select', {
+          value: String(shown === undefined || shown === null ? '' : shown),
+          onChange: (ev) => onEdit && onEdit(field, ev && ev.target ? ev.target.value : ''),
+          disabled: !writable,
+          style: styles.input,
+        }, ...(Array.isArray(field.options) ? field.options : []).map((option) => e(React, 'option', {
+          value: String(option.value),
+          key: String(option.value),
+        }, option.label)));
+      } else {
+        const inputProps = field.kind === 'boolean'
+          ? { type: 'checkbox', checked: shown === true, onChange: (ev) => onEdit && onEdit(field, !!(ev && ev.target ? ev.target.checked : false)), disabled: !writable }
+          : { type: 'number', value: String(shown), onChange: (ev) => onEdit && onEdit(field, ev && ev.target ? ev.target.value : ''), disabled: !writable, style: styles.input };
+        control = e(React, 'input', inputProps);
+      }
       children.push(e(React, 'div', { style: styles.row, key: 'f:' + key },
         e(React, 'span', { style: { ...styles.label, color: invalid ? '#c00' : 'inherit' } }, field.label),
-        e(React, 'input', inputProps),
+        control,
         e(React, 'span', { style: styles.tertiary }, unit),
         e(React, 'span', { style: styles.tertiary }, '当前：' + formatCurrentValue(field, base))));
     }

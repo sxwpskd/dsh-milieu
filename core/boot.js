@@ -588,7 +588,8 @@ function bootInner({ host, fs, log, config, attachFileSink } = {}) {
           }
           monitor = startPreloadMonitor({
             host: subHost, fs: trackedFs, root,
-            libs: cfg.libs, texts: cfg.texts, criteria: cfg.criteria, log,
+            libs: cfg.libs, texts: cfg.texts, criteria: cfg.criteria,
+            agentPreset: cfg.preloadAgentPreset, log,
             enqueue: serial.enqueue, // 与工作区监控串行（避免同时写状态文件）
           });
           monitorSource = source;

@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.1.2-dev.1 — 未发布
+
+- **预加载会话模式可选**：新增 `preloadAgentPreset`，可选 `standard`（标准模式）/ `cordis`（创造模式）；空 = 跟随平台默认。只影响新建的预加载会话，已有会话保持原模式。
+- 配置页「预加载」组增加模式选择；`preloadAgentPreset` 是 volatile，保存后生效。
+
 ## 0.1.2-dev.0 — 未发布
 
 - 配置页字段分组：`readiness.*` 从“重读判据”移到“预加载门槛（认知库）”；`agentLoopWaitMs` 归“预加载”；`fingerprint.*` / `eventKeep*` / `clientMemoryLimit` / `pollMs` / `readTimeoutMs` / `debug` 归“状态与客户端”。
