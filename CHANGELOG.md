@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.1.2-dev.0 — 未发布
+
+- 配置页字段分组：`readiness.*` 从“重读判据”移到“预加载门槛（认知库）”；`agentLoopWaitMs` 归“预加载”；`fingerprint.*` / `eventKeep*` / `clientMemoryLimit` / `pollMs` / `readTimeoutMs` / `debug` 归“状态与客户端”。
+- 这是 **dev 分支**的改动，未发布；0.1.1 仍是稳定版。
+
 ## 0.1.1 — 2026-11-12
 
 相对 0.1.0。
