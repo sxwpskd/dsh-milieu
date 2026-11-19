@@ -1,5 +1,11 @@
 # 更新日志
 
+## 0.1.2-dev.3 — 未发布
+
+- **修复预加载会话"消失"**：DSH 0.2.2 的 `sessionController` 没有 `inspect`（只有 `events`），旧检测恒为"查不到"，把已被人使用的会话继续当成预加载，于是不再新建。
+- 改用平台 `sessionController.events` 读最近 100 条事件，按 `data.source.kind === 'user'` 数人类消息；空白会话补读，使用后毕业。
+- 拿不到事件时用 `session/list` 的 `blank` 兜底；仍失败把原因写进 `preload.json`（`inspectError`），不再静默当成干净。
+
 ## 0.1.2-dev.2 — 未发布
 
 - **预加载会话置顶**：新增 `preloadPin`（默认开）；新建预加载后调用 `workspaceRegistry.pinSession`，在**该会话所属工作区**内置顶。

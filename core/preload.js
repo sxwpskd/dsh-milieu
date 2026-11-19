@@ -295,7 +295,7 @@ async function preloadSessionInner(o = {}) {
    * 形状按能力契约：`{ok:true, value:[{id, updatedAt}]}` / `{ok:false, reason}`。
    * 再容忍一次裸数组（旧适配层的形状）——形状差异不该被当成"没有会话"（那会清掉真记录）。
    *
-   * @returns {Promise<{ok:boolean, reason?:string, ids?:Set<string>, updatedAt?:Map<string,number>}>}
+   * @returns {Promise<{ok:boolean, reason?:string, ids?:Set<string>, updatedAt?:Map<string,number>, meta?:Map<string,{blank:boolean|null,lastPromptAt:number|null}>}>}
    */
   const readSessionList = async () => {
     if (!host.session || typeof host.session.list !== 'function') {
@@ -309,7 +309,7 @@ async function preloadSessionInner(o = {}) {
     }
     if (Array.isArray(listed)) {
       const idx = sessionListIndex(listed);
-      return { ok: true, ids: idx.ids, updatedAt: idx.updatedAt };
+      return { ok: true, ids: idx.ids, updatedAt: idx.updatedAt, meta: idx.meta };
     }
     if (!listed || listed.ok === false) {
       return { ok: false, reason: (listed && listed.reason) || '会话列表不可用' };
@@ -317,7 +317,7 @@ async function preloadSessionInner(o = {}) {
     const rows = Array.isArray(listed.value) ? listed.value
       : (Array.isArray(listed.items) ? listed.items : []);
     const idx = sessionListIndex(rows);
-    return { ok: true, ids: idx.ids, updatedAt: idx.updatedAt };
+    return { ok: true, ids: idx.ids, updatedAt: idx.updatedAt, meta: idx.meta };
   };
 
   /** 空闲阈值：**默认值只有 config/criteria.js 一处**（本层不另写一个数）。拿不到 → null（保守）。 */
@@ -438,21 +438,46 @@ async function preloadSessionInner(o = {}) {
     let blank = null;
     let humanMessages = null;
     let used = null;
+    let inspectError;
+    const listedMeta = sessionIndex && sessionIndex.meta && typeof sessionIndex.meta.get === 'function'
+      ? sessionIndex.meta.get(existing.sessionId) : null;
+    // 拿不到事件时至少用 `session/list` 的 blank 兜底（平台自带，不激活会话）。
+    // 非空白但拿不到精确计数：只能确定"至少 1 条"（预加载自己的阅读请求），used 保持 null。
+    const applyListBlank = () => {
+      if (!listedMeta || typeof listedMeta.blank !== 'boolean') return false;
+      blank = listedMeta.blank;
+      humanMessages = blank ? 0 : 1;
+      used = null;
+      return true;
+    };
     if (!adoptError && host.session.available()) {
       try {
-        if (host.session.canInspect()) {
+        if (typeof host.session.canEvents === 'function' && host.session.canEvents()) {
+          // 正路：平台 0.2.2 的 sessionController 只有 events，没有 inspect。
+          const ev = await host.session.events(existing.sessionId);
+          if (ev && ev.ok === false) throw new Error(ev.reason);
+          const events = ev && Array.isArray(ev.value) ? ev.value : [];
+          humanMessages = events.filter(isHumanMessage).length;
+          blank = humanMessages === 0;
+          used = humanMessages > 1;
+        } else if (typeof host.session.canInspect === 'function' && host.session.canInspect()) {
+          // 旧宿主兼容：没有 events、只有 inspect 时继续用。
           const insp = await host.session.inspect(existing.sessionId);
-          // 适配层把平台异常翻成 `{ok:false}`（不再抛）；这里按"查不到"处理 → 走保守分支。
           if (insp && insp.ok === false) throw new Error(insp.reason);
           const events = insp && Array.isArray(insp.events) ? insp.events : [];
           humanMessages = events.filter(isHumanMessage).length;
           blank = humanMessages === 0;
           used = humanMessages > 1;
+        } else {
+          applyListBlank();
         }
-      } catch {
+      } catch (err) {
+        // 不许静默：把为什么没查出来写进诊断；能用 list 的 blank 就兜底。
+        inspectError = String((err && err.message) || err);
         blank = null;
         humanMessages = null;
         used = null;
+        applyListBlank();
       }
     }
 
@@ -493,7 +518,7 @@ async function preloadSessionInner(o = {}) {
           kept: existing.sessionId,
           created: false,
           didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, unpinError });
+        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, inspectError, unpinError });
       }
       const elapsed = now - updatedAt;
       if (elapsed < idleMs) {
@@ -506,7 +531,7 @@ async function preloadSessionInner(o = {}) {
           kept: existing.sessionId,
           created: false,
           didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, elapsedMs: elapsed, unpinError });
+        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, elapsedMs: elapsed, inspectError, unpinError });
       }
       // **毕业**：它已经是正式会话了，不再占着 "preload" 这个位子。
       state = withManaged(state, { sessionId: existing.sessionId, role: 'active', source: existing.source });
@@ -520,7 +545,7 @@ async function preloadSessionInner(o = {}) {
           kept: existing.sessionId,
           created: false,
           didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, graduated: false, unpinError });
+        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, graduated: false, inspectError, unpinError });
       }
       graduatedFrom = existing.sessionId;
       keptEntry = null;
@@ -546,7 +571,7 @@ async function preloadSessionInner(o = {}) {
           kept: existing.sessionId,
           created: false,
           didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, blank, humanMessages, used, sendError });
+        }, 'existing', { workspaceId, step, unarchive: un, blank, humanMessages, used, inspectError, sendError });
       }
       return finish({
         ok: true,
@@ -556,7 +581,7 @@ async function preloadSessionInner(o = {}) {
         kept: existing.sessionId,
         created: false,
         didRead,
-      }, 'existing', { workspaceId, step, unarchive: un, blank, humanMessages, used });
+      }, 'existing', { workspaceId, step, unarchive: un, blank, humanMessages, used, inspectError });
     }
   }
 
