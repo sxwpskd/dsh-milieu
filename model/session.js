@@ -126,12 +126,13 @@ export function listPreloadSessions(managedSessions) {
  * 行形状是能力契约（adapter 已归一成 `[{id, updatedAt}]`）；这里再容错 `sessionId` /
  * 非数字时间两种拼法——**形状差异不该变成"没有会话"**，那会让对账把真会话清掉。
  *
- * @param {Array} rows `host.session.list()` 的值（`[{id, updatedAt}]`）
- * @returns {{ids: Set<string>, updatedAt: Map<string, number>}}
+ * @param {Array} rows `host.session.list()` 的值（`[{id, updatedAt, blank, lastPromptAt}]`）
+ * @returns {{ids: Set<string>, updatedAt: Map<string, number>, meta: Map<string, {blank: boolean|null, lastPromptAt: number|null}>}}
  */
 export function sessionListIndex(rows) {
   const ids = new Set();
   const updatedAt = new Map();
+  const meta = new Map();
   for (const row of Array.isArray(rows) ? rows : []) {
     if (!row || typeof row !== 'object') continue;
     const id = typeof row.id === 'string' && row.id ? row.id
@@ -140,8 +141,13 @@ export function sessionListIndex(rows) {
     ids.add(id);
     // 没有可用时间就不记：调用方靠"查不到时间"走保守分支，而不是拿 0 当"很久没动"。
     if (typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt)) updatedAt.set(id, row.updatedAt);
+    meta.set(id, {
+      blank: typeof row.blank === 'boolean' ? row.blank : null,
+      lastPromptAt: typeof row.lastPromptAt === 'number' && Number.isFinite(row.lastPromptAt)
+        ? row.lastPromptAt : null,
+    });
   }
-  return { ids, updatedAt };
+  return { ids, updatedAt, meta };
 }
 
 /**

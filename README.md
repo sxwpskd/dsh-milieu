@@ -30,6 +30,8 @@
 ### 2. 预加载会话，维护"会话的认知"
 
 - **预加载会话**：打开 `preloadSession` 后，工作区没有一条"已经读过"的会话就建一条，并让它真读一次；空白会话会补读；被人用过的旧会话转成 `active`，再建一条干净的。
+- **预加载模式**：`preloadAgentPreset` 可选 `standard`（标准模式）或 `cordis`（创造模式）；**空 = 跟随平台默认**。只影响**新建**的预加载会话，已有的保持原模式。
+- **预加载置顶**：`preloadPin` 默认开；新建的预加载会话会 pin 到**它所属工作区**的侧栏顶部。一旦检测到它**被人使用**（人类消息 >1），自动 `unpin`；平台没置顶时 unpin 是 no-op。
 - **长期对账**（不是启动时算一次）：插件挂载后一直盯着——每轮 `turn/end` 之后（去抖 300ms）和每 `preloadPollMs`（默认 60 秒）各复查一次"该不该毕业 / 是不是恰好一条 / 要不要补读"。用户用完预加载会话后，空闲满 `preloadIdleMs`（默认 5 分钟）就会让它毕业并补一条新的，不用等重启。稳定态不写日志（只在建了 / 修复了 / 毕业了 / 第一次被 readiness 拦下 / 第一次失败时各写一条）。
 - **该重读时提醒**：界面按五关判断——这条会话归不归我们管 → 弹过没有 → 工作区变没变 → 变化够不够大 → 距会话最后活动够不够久。都过了才弹「这个工作区变了，要不要重读」。
 - **重读带变更摘要**：点"重读"发出去的请求里带变更视图——30 天内用过的会话给"文件名 + 旧→新大小变化"；超过 30 天只给文件名（认知库最多 20 条）和其它库的两个索引文件。
@@ -81,7 +83,7 @@ DSH 页面右下角有一个 **⚙ 浮球**：点开只读面板，显示 `milie
 侧栏「插件」→ `dsh-milieu` 组合包 → 行 `milieu` → **配置**：打开该行的独立配置页。
 
 - **工作区列表**只读展示 `workspaces[]`（结构性配置，增删/改路径请改 profile patch 后重载）；
-- **即时字段**可编辑：`preloadSession`、`autoState`、`criteria` 下的标量（预加载/工作区监控/重读判据）；
+- **即时字段**可编辑：`preloadSession`、`preloadAgentPreset`、`preloadPin`、`autoState`、`criteria` 下的标量（预加载/工作区监控/重读判据）；
 - 保存走 DSH 官方 `form.mutate`：Host 校验完整 Config、写 profile patch；保存成功会重载工作区实例（不是逐字段增量）；
 - 页面在 Host 没给 `form`、只读、加载中、保存失败时都只降级显示，不把插件管理页搞白；
 - 本页不直接写 `.dsh-milieu/` 或 `milieu-state.json`。
@@ -128,6 +130,8 @@ node <包目录>\uninstall\withdraw.mjs --root <工作区> --apply --all
 | --- | --- | --- |
 | `workspaceRoot` | `''`（空） | 工作区根。空 = **问平台** `workspaceRegistry`：只有一个工作区就用它；多个时用平台顺序里的第一个（日志报出用的是哪个） |
 | `preloadSession` | `false` | 要不要保证一条**已经读过**的预加载会话。默认关：它会真跑一次 agent。打开后是持续对账（轮次事件 + 低频定时），不是启动时算一次 |
+| `preloadAgentPreset` | `''` | 新建预加载会话用哪个 DSH agent preset：空 = 跟随平台默认；`standard` = 标准模式；`cordis` = 创造模式。只影响新建的那条，已有会话保持原模式 |
+| `preloadPin` | `true` | 新建预加载会话时 pin 到**它所属工作区**的侧栏顶部；检测到被人使用后自动 unpin（没置顶则 no-op） |
 | `libs.review` / `libs.tools` / `libs.external` | `review` / `tools` / `external` | 三个库的目录名 |
 | `statePath` | `STATE.md` | 状态页在认知库里的相对路径 |
 | `injectState` / `injectBudgetKiB` | `true` / `128` | 要不要注入状态页；注入预算（KiB），超了跳过、不截断 |

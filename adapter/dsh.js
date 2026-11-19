@@ -165,7 +165,16 @@ function normalizeSessionList(raw) {
     const updatedAt = toMillis(
       row.updatedAt ?? row.updatedAtMs ?? row.lastActivityAt ?? row.activityAt ?? row.at,
     );
-    out.push({ id, updatedAt });
+    // 平台 `session/list` 自带 blank / lastPromptAt（`sessionListMetadata` 投影）。
+    // 这是 inspect 不可用时判断“空白 / 是否有人在用”的兜底事实，别丢。
+    // 只有平台真给了才加键（旧测试/旧宿主保持 `{id,updatedAt}` 的兼容形状）。
+    const rowOut = { id, updatedAt };
+    if (typeof row.blank === 'boolean') rowOut.blank = row.blank;
+    const lastPromptAt = toMillis(
+      row.lastPromptAt ?? row.lastPromptAtMs ?? row.lastUserPromptAt,
+    );
+    if (lastPromptAt !== null) rowOut.lastPromptAt = lastPromptAt;
+    out.push(rowOut);
   }
   return out;
 }
@@ -181,7 +190,7 @@ function normalizeSessionList(raw) {
  *   · `onSessionEvent(cb)`：订阅持久会话事件（**长期 effect 的触发源**），返回 disposer
  *   · `systemPrompt.available()/orderOf()/section()`
  *   · `workspace.available()/listPaths()/resolveId()/unarchive()`
- *   · `session.available()/canPrompt()/canInspect()/create()/inspect()/prompt()/list()`
+ *   · `session.available()/canPrompt()/canEvents()/canInspect()/create()/events()/inspect()/prompt()/list()`
  *   · `agents.available()/create()`
  *   · `texts` / `labels`（宿主文案，见上）
  *
@@ -383,6 +392,34 @@ export function createDsh(ctx) {
           return { ok: false, reason: errorText(err) };
         }
       },
+
+      /** 置顶（按会话所属工作区呈现；平台存的是 registry 级 pin 集；只对已知、未归档会话有效）。 */
+      async pin(sessionId) {
+        const wr = service(ctx, SERVICE.workspace);
+        if (!wr || typeof wr.pinSession !== 'function') {
+          return { ok: false, reason: '宿主没有 ' + SERVICE.workspace + '.pinSession' };
+        }
+        try {
+          await wr.pinSession(sessionId);
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, reason: errorText(err) };
+        }
+      },
+
+      /** 解除置顶；平台本身幂等（没置顶就不写），失败返回原因。 */
+      async unpin(sessionId) {
+        const wr = service(ctx, SERVICE.workspace);
+        if (!wr || typeof wr.unpinSession !== 'function') {
+          return { ok: false, reason: '宿主没有 ' + SERVICE.workspace + '.unpinSession' };
+        }
+        try {
+          await wr.unpinSession(sessionId);
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, reason: errorText(err) };
+        }
+      },
     },
 
     // ------------------------------------------------------------------
@@ -398,6 +435,11 @@ export function createDsh(ctx) {
       canPrompt() {
         const sc = service(ctx, SERVICE.session);
         return !!(sc && typeof sc.prompt === 'function');
+      },
+
+      canEvents() {
+        const sc = service(ctx, SERVICE.session);
+        return !!(sc && typeof sc.events === 'function');
       },
 
       canInspect() {
@@ -426,6 +468,49 @@ export function createDsh(ctx) {
         }
         try {
           return await sc.inspect(sessionId);
+        } catch (err) {
+          return callFailed(err, CODES.SESSION_INSPECT_FAILED);
+        }
+      },
+
+      /**
+       * 读一页**真实会话事件**（冷安全、不激活会话）。
+       *
+       * 平台 0.2.2 的 `sessionController` 没有 `inspect`（只有 `events`）；旧代码的
+       * `canInspect()` 在这里恒为 false → blank/used 永远 null，预加载会话被误判成
+       * "已有干净预加载"，人用了也不毕业，于是"没有预加载会话"。
+       *
+       * `events` 返回 `{records:[{type:'event',event}]}`；只取最近 100 条消息。
+       * @returns {Promise<{ok:true,value:Array}|{ok:false,reason:string,code:string,blockedBy:string}>}
+       */
+      async events(sessionId, maxMessages = 100) {
+        const sc = service(ctx, SERVICE.session);
+        if (!sc || typeof sc.events !== 'function') {
+          return fail('宿主没有 ' + SERVICE.session + '.events', 'host', CODES.HOST_UNAVAILABLE);
+        }
+        try {
+          const signal = typeof AbortController === 'function' ? new AbortController().signal : undefined;
+          const raw = await sc.events({
+            address: { kind: 'session', sessionId },
+            maxMessages,
+          }, signal);
+          if (raw && raw.ok === false) {
+            return fail('读取会话事件失败：' + String(raw.reason || '宿主返回失败'), 'host', CODES.SESSION_INSPECT_FAILED);
+          }
+          const records = Array.isArray(raw) ? raw
+            : (raw && Array.isArray(raw.records) ? raw.records
+              : (raw && Array.isArray(raw.value) ? raw.value
+                : (raw && Array.isArray(raw.events) ? raw.events : null)));
+          if (!records) {
+            return fail('读取会话事件失败：宿主返回的形状不认识', 'host', CODES.SESSION_INSPECT_FAILED);
+          }
+          const events = [];
+          for (const record of records) {
+            if (!record || typeof record !== 'object') continue;
+            if (record.type === 'event' && record.event && typeof record.event === 'object') events.push(record.event);
+            else if (typeof record.type === 'string') events.push(record);
+          }
+          return { ok: true, value: events };
         } catch (err) {
           return callFailed(err, CODES.SESSION_INSPECT_FAILED);
         }

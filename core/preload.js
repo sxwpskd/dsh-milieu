@@ -156,8 +156,10 @@ export function preloadSession(o = {}) {
  *   ② 没有可保留的会话 → 过 `evaluateReadiness`：不达标 → `readiness` 跳过（ok:true）；达标 → 建 + 发。
  *
  * @param {object} o
- *   · host / fs / root / libs / texts / now / criteria / log
+ *   · host / fs / root / libs / texts / now / criteria / agentPreset / log
  *   · readStateImpl / writeStateImpl / createAgent 注入点（测试与将来复用）
+ *   · `agentPreset`：新建预加载会话时透传给平台（空 = 跟随平台默认）；认领旧会话不改模式
+ *   · `pinPreload`：新建后是否 pin 到侧栏顶部（默认 true）；被人类使用后自动 unpin
  * @returns {Promise<object>} 固定形状，见 `report`
  */
 async function preloadSessionInner(o = {}) {
@@ -166,6 +168,8 @@ async function preloadSessionInner(o = {}) {
     libs = { review: 'review', tools: 'tools', external: 'external' },
     texts, now = Date.now(),
     criteria,
+    agentPreset,
+    pinPreload = true,
     readStateImpl = (r, l) => readState(r, l, fs),
     writeStateImpl = (r, l, s) => writeState(r, l, s, fs),
     createAgent = (options) => host.agents.create(options),
@@ -291,7 +295,7 @@ async function preloadSessionInner(o = {}) {
    * 形状按能力契约：`{ok:true, value:[{id, updatedAt}]}` / `{ok:false, reason}`。
    * 再容忍一次裸数组（旧适配层的形状）——形状差异不该被当成"没有会话"（那会清掉真记录）。
    *
-   * @returns {Promise<{ok:boolean, reason?:string, ids?:Set<string>, updatedAt?:Map<string,number>}>}
+   * @returns {Promise<{ok:boolean, reason?:string, ids?:Set<string>, updatedAt?:Map<string,number>, meta?:Map<string,{blank:boolean|null,lastPromptAt:number|null}>}>}
    */
   const readSessionList = async () => {
     if (!host.session || typeof host.session.list !== 'function') {
@@ -305,7 +309,7 @@ async function preloadSessionInner(o = {}) {
     }
     if (Array.isArray(listed)) {
       const idx = sessionListIndex(listed);
-      return { ok: true, ids: idx.ids, updatedAt: idx.updatedAt };
+      return { ok: true, ids: idx.ids, updatedAt: idx.updatedAt, meta: idx.meta };
     }
     if (!listed || listed.ok === false) {
       return { ok: false, reason: (listed && listed.reason) || '会话列表不可用' };
@@ -313,7 +317,7 @@ async function preloadSessionInner(o = {}) {
     const rows = Array.isArray(listed.value) ? listed.value
       : (Array.isArray(listed.items) ? listed.items : []);
     const idx = sessionListIndex(rows);
-    return { ok: true, ids: idx.ids, updatedAt: idx.updatedAt };
+    return { ok: true, ids: idx.ids, updatedAt: idx.updatedAt, meta: idx.meta };
   };
 
   /** 空闲阈值：**默认值只有 config/criteria.js 一处**（本层不另写一个数）。拿不到 → null（保守）。 */
@@ -434,21 +438,46 @@ async function preloadSessionInner(o = {}) {
     let blank = null;
     let humanMessages = null;
     let used = null;
+    let inspectError;
+    const listedMeta = sessionIndex && sessionIndex.meta && typeof sessionIndex.meta.get === 'function'
+      ? sessionIndex.meta.get(existing.sessionId) : null;
+    // 拿不到事件时至少用 `session/list` 的 blank 兜底（平台自带，不激活会话）。
+    // 非空白但拿不到精确计数：只能确定"至少 1 条"（预加载自己的阅读请求），used 保持 null。
+    const applyListBlank = () => {
+      if (!listedMeta || typeof listedMeta.blank !== 'boolean') return false;
+      blank = listedMeta.blank;
+      humanMessages = blank ? 0 : 1;
+      used = null;
+      return true;
+    };
     if (!adoptError && host.session.available()) {
       try {
-        if (host.session.canInspect()) {
+        if (typeof host.session.canEvents === 'function' && host.session.canEvents()) {
+          // 正路：平台 0.2.2 的 sessionController 只有 events，没有 inspect。
+          const ev = await host.session.events(existing.sessionId);
+          if (ev && ev.ok === false) throw new Error(ev.reason);
+          const events = ev && Array.isArray(ev.value) ? ev.value : [];
+          humanMessages = events.filter(isHumanMessage).length;
+          blank = humanMessages === 0;
+          used = humanMessages > 1;
+        } else if (typeof host.session.canInspect === 'function' && host.session.canInspect()) {
+          // 旧宿主兼容：没有 events、只有 inspect 时继续用。
           const insp = await host.session.inspect(existing.sessionId);
-          // 适配层把平台异常翻成 `{ok:false}`（不再抛）；这里按"查不到"处理 → 走保守分支。
           if (insp && insp.ok === false) throw new Error(insp.reason);
           const events = insp && Array.isArray(insp.events) ? insp.events : [];
           humanMessages = events.filter(isHumanMessage).length;
           blank = humanMessages === 0;
           used = humanMessages > 1;
+        } else {
+          applyListBlank();
         }
-      } catch {
+      } catch (err) {
+        // 不许静默：把为什么没查出来写进诊断；能用 list 的 blank 就兜底。
+        inspectError = String((err && err.message) || err);
         blank = null;
         humanMessages = null;
         used = null;
+        applyListBlank();
       }
     }
 
@@ -465,6 +494,15 @@ async function preloadSessionInner(o = {}) {
     }
 
     if (used === true) {
+      // **被人类使用 → 先解除置顶**（2026-11-19 主人定）：置顶只服务于"还没被使用的预加载"。
+      // 平台 unpin 幂等：没置顶就不写；失败不死，只记进诊断，不耽误毕业/新建。
+      let unpinError;
+      if (host.workspace && typeof host.workspace.unpin === 'function') {
+        const up = await host.workspace.unpin(existing.sessionId);
+        if (!up || up.ok !== true) unpinError = (up && up.reason) || '解除置顶失败';
+      } else {
+        unpinError = '宿主没有 workspaceRegistry.unpinSession';
+      }
       // **已被人用过 → 先看空闲够不够久**（2026-11 主人定）：人可能还在用这条会话，
       // 立刻毕业会把它从预加载位踢走、再建一条新的——正是"每次启动新建"的另一半原因。
       const updatedAt = sessionIndex ? sessionIndex.updatedAt.get(existing.sessionId) : undefined;
@@ -480,7 +518,7 @@ async function preloadSessionInner(o = {}) {
           kept: existing.sessionId,
           created: false,
           didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used });
+        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, inspectError, unpinError });
       }
       const elapsed = now - updatedAt;
       if (elapsed < idleMs) {
@@ -493,7 +531,7 @@ async function preloadSessionInner(o = {}) {
           kept: existing.sessionId,
           created: false,
           didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, elapsedMs: elapsed });
+        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, elapsedMs: elapsed, inspectError, unpinError });
       }
       // **毕业**：它已经是正式会话了，不再占着 "preload" 这个位子。
       state = withManaged(state, { sessionId: existing.sessionId, role: 'active', source: existing.source });
@@ -507,7 +545,7 @@ async function preloadSessionInner(o = {}) {
           kept: existing.sessionId,
           created: false,
           didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, graduated: false });
+        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, graduated: false, inspectError, unpinError });
       }
       graduatedFrom = existing.sessionId;
       keptEntry = null;
@@ -533,7 +571,7 @@ async function preloadSessionInner(o = {}) {
           kept: existing.sessionId,
           created: false,
           didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, blank, humanMessages, used, sendError });
+        }, 'existing', { workspaceId, step, unarchive: un, blank, humanMessages, used, inspectError, sendError });
       }
       return finish({
         ok: true,
@@ -543,7 +581,7 @@ async function preloadSessionInner(o = {}) {
         kept: existing.sessionId,
         created: false,
         didRead,
-      }, 'existing', { workspaceId, step, unarchive: un, blank, humanMessages, used });
+      }, 'existing', { workspaceId, step, unarchive: un, blank, humanMessages, used, inspectError });
     }
   }
 
@@ -575,7 +613,10 @@ async function preloadSessionInner(o = {}) {
     let un = { ok: false, reason: '未走到' };
     try {
       // 适配层把平台异常翻成 `{ok:false}`（不再抛）；失败就按建会话失败处理。
-      const createdResult = await host.session.create(workspaceId ? { workspaceId, sessionId } : { cwd: root, sessionId });
+      // **模式只在新会话上给**：空串 = 跟随平台默认，显式值 = DSH agent preset id。
+      const createReq = workspaceId ? { workspaceId, sessionId } : { cwd: root, sessionId };
+      if (typeof agentPreset === 'string' && agentPreset) createReq.agentPreset = agentPreset;
+      const createdResult = await host.session.create(createReq);
       if (createdResult && createdResult.ok === false) throw new Error(createdResult.reason);
       created = true;
       un = await host.workspace.unarchive(sessionId);
@@ -613,7 +654,7 @@ async function preloadSessionInner(o = {}) {
       }, 'create', { workspaceId });
     }
     try {
-      const res = await createAgent(buildAgentCreateOptions({ sessionId, cwd: root }));
+      const res = await createAgent(buildAgentCreateOptions({ sessionId, cwd: root, agentPreset }));
       if (res && res.ok === false) throw new Error(res.reason);
       created = true;
     } catch (err) {
@@ -666,6 +707,19 @@ async function preloadSessionInner(o = {}) {
     }, 'create', { workspaceId, sendError: sent.reason });
   }
 
+  // ⑤ **置顶**（默认；配置可关）。pin 失败不改预加载结果，只记诊断。
+  let pinned = false;
+  let pinError;
+  if (pinPreload !== false) {
+    if (host.workspace && typeof host.workspace.pin === 'function') {
+      const p = await host.workspace.pin(sessionId);
+      pinned = p.ok === true;
+      if (!pinned) pinError = (p && p.reason) || '置顶失败';
+    } else {
+      pinError = '宿主没有 workspaceRegistry.pinSession';
+    }
+  }
+
   return finish({
     ok: true,
     reason: '建了一条预加载会话并让它真读了一次'
@@ -676,5 +730,5 @@ async function preloadSessionInner(o = {}) {
     created: true,
     didRead: true,
     readiness, // 对账日志要它：这次是过了哪条门槛才建的
-  }, 'create', { workspaceId, repaired, converged });
+  }, 'create', { workspaceId, repaired, converged, pinned, pinError });
 }

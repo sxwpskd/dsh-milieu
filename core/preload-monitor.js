@@ -113,7 +113,7 @@ function signatureOf(result) {
  * 启动预加载会话监控（**一个工作区一份**；由 `core/boot.js` 在服务就绪后调用）。
  *
  * @param {object} o
- *   · host / fs / root / libs / texts / criteria —— 与 `preloadSession` 同一份入参，原样转发
+ *   · host / fs / root / libs / texts / criteria / agentPreset / pinPreload —— 与 `preloadSession` 同一份入参，原样转发
  *   · log        —— 可选：`{event(name, message, fields)}`（`log/logger.js` 的新形态）；只写事件日志
  *   · timers     —— 可选注入：`{setInterval, clearInterval, setTimeout, clearTimeout}`；默认全局
  *   · runPreload —— 可选注入：默认 `core/preload.js` 的 `preloadSession`（测试用来控制"在飞"）
@@ -128,7 +128,7 @@ function signatureOf(result) {
  */
 export function startPreloadMonitor(o = {}) {
   const {
-    host, fs, root, libs, texts, criteria,
+    host, fs, root, libs, texts, criteria, agentPreset, pinPreload,
   } = o;
   const log = o.log || null;
   const timers = pickTimers(o.timers);
@@ -249,7 +249,7 @@ export function startPreloadMonitor(o = {}) {
       // 队列本身不提供 cancel；**stop 后排队任务不执行**由下面这句 stopped 检查保证。
       result = await enqueue(() => {
         if (stopped) return stoppedResult();
-        return runPreload({ host, fs, root, libs, texts, criteria });
+        return runPreload({ host, fs, root, libs, texts, criteria, agentPreset, pinPreload });
       });
     } catch (err) {
       // `preloadSession` 自己包了 guardAsync（不会 reject）；注入的 runPreload 可能抛，这里收掉。
