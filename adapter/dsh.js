@@ -384,7 +384,7 @@ export function createDsh(ctx) {
         }
       },
 
-      /** 置顶（平台 pin 是 registry 全局的；只对已知、未归档会话有效）。 */
+      /** 置顶（按会话所属工作区呈现；平台存的是 registry 级 pin 集；只对已知、未归档会话有效）。 */
       async pin(sessionId) {
         const wr = service(ctx, SERVICE.workspace);
         if (!wr || typeof wr.pinSession !== 'function') {
