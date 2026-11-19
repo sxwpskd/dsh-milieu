@@ -6,8 +6,8 @@
 //   · 本文件是**默认值的消费者**：所有默认值都从 `config/defaults.js` / `config/criteria.js` 取，
 //     不在这里重新写一份数字（"同一件事两个版本"是本工作区最怕的错）。
 //
-// Volatile（即时字段）标 5 个（SETTINGS-UI-PLAN §2 / task-12）：
-//   · `preloadSession` / `preloadAgentPreset` / `autoState` / `criteria` —— 保存后可以即时生效；
+// Volatile（即时字段）标 6 个（SETTINGS-UI-PLAN §2 / task-12）：
+//   · `preloadSession` / `preloadAgentPreset` / `preloadPin` / `autoState` / `criteria` —— 保存后可以即时生效；
 //   · `workspaces` —— 第 1 步**只读展示**用；标记 volatile 让 Loader 在只改它时也能触发
 //     `loader/volatile-update`（页面先不提供写控件，后续任务再决定结构性编辑走哪条路）。
 //   其余字段是普通字段：改它们走 Loader 的常规生命周期（重载插件行），不是即时更新。
@@ -94,6 +94,7 @@ export const Config = Schema.object({
   // ---- 即时字段（Volatile） ----
   preloadSession: Schema.boolean().default(DEFAULT_CONFIG.preloadSession).volatile(),
   preloadAgentPreset: Schema.string().default(DEFAULT_CONFIG.preloadAgentPreset).volatile(),
+  preloadPin: Schema.boolean().default(DEFAULT_CONFIG.preloadPin).volatile(),
   autoState: Schema.boolean().default(DEFAULT_CONFIG.autoState).volatile(),
   criteria: criteriaDefaults.default(DEFAULT_CRITERIA).volatile(),
   // 第 1 步只读展示（页面不提供写控件）；先标 volatile 让只改它也能收到更新事件。
@@ -104,4 +105,4 @@ export const Config = Schema.object({
 });
 
 /** 列出即时字段名（启动器/测试用；与上面 `.volatile()` 的字段保持一致）。 */
-export const VOLATILE_FIELDS = Object.freeze(['preloadSession', 'preloadAgentPreset', 'autoState', 'criteria', 'workspaces']);
+export const VOLATILE_FIELDS = Object.freeze(['preloadSession', 'preloadAgentPreset', 'preloadPin', 'autoState', 'criteria', 'workspaces']);

@@ -36,6 +36,9 @@ export const DEFAULT_CONFIG = {
   // **预加载会话模式**：DSH agent preset id（`standard` / `cordis` 等）。
   // **空 = 跟随平台默认**；只影响新建的预加载会话，已有会话保持原模式。
   preloadAgentPreset: '',
+  // **预加载会话创建时置顶**（默认开）：新建的预加载会话 pin 到侧栏顶部。
+  // 会话一旦被人类使用，插件会解除置顶；没置顶时平台 unpin 是 no-op。
+  preloadPin: true,
   // **自动生成状态文件**（需求 R5 的地基）：会话开场扫一次工作区、产出事件流。
   // 默认开——它只做"只读扫描 + 写我们自己的状态文件"。
   autoState: true,

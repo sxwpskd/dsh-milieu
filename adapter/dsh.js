@@ -383,6 +383,34 @@ export function createDsh(ctx) {
           return { ok: false, reason: errorText(err) };
         }
       },
+
+      /** 置顶（平台 pin 是 registry 全局的；只对已知、未归档会话有效）。 */
+      async pin(sessionId) {
+        const wr = service(ctx, SERVICE.workspace);
+        if (!wr || typeof wr.pinSession !== 'function') {
+          return { ok: false, reason: '宿主没有 ' + SERVICE.workspace + '.pinSession' };
+        }
+        try {
+          await wr.pinSession(sessionId);
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, reason: errorText(err) };
+        }
+      },
+
+      /** 解除置顶；平台本身幂等（没置顶就不写），失败返回原因。 */
+      async unpin(sessionId) {
+        const wr = service(ctx, SERVICE.workspace);
+        if (!wr || typeof wr.unpinSession !== 'function') {
+          return { ok: false, reason: '宿主没有 ' + SERVICE.workspace + '.unpinSession' };
+        }
+        try {
+          await wr.unpinSession(sessionId);
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, reason: errorText(err) };
+        }
+      },
     },
 
     // ------------------------------------------------------------------

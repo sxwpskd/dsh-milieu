@@ -159,6 +159,7 @@ export function preloadSession(o = {}) {
  *   · host / fs / root / libs / texts / now / criteria / agentPreset / log
  *   · readStateImpl / writeStateImpl / createAgent 注入点（测试与将来复用）
  *   · `agentPreset`：新建预加载会话时透传给平台（空 = 跟随平台默认）；认领旧会话不改模式
+ *   · `pinPreload`：新建后是否 pin 到侧栏顶部（默认 true）；被人类使用后自动 unpin
  * @returns {Promise<object>} 固定形状，见 `report`
  */
 async function preloadSessionInner(o = {}) {
@@ -168,6 +169,7 @@ async function preloadSessionInner(o = {}) {
     texts, now = Date.now(),
     criteria,
     agentPreset,
+    pinPreload = true,
     readStateImpl = (r, l) => readState(r, l, fs),
     writeStateImpl = (r, l, s) => writeState(r, l, s, fs),
     createAgent = (options) => host.agents.create(options),
@@ -467,6 +469,15 @@ async function preloadSessionInner(o = {}) {
     }
 
     if (used === true) {
+      // **被人类使用 → 先解除置顶**（2026-11-19 主人定）：置顶只服务于"还没被使用的预加载"。
+      // 平台 unpin 幂等：没置顶就不写；失败不死，只记进诊断，不耽误毕业/新建。
+      let unpinError;
+      if (host.workspace && typeof host.workspace.unpin === 'function') {
+        const up = await host.workspace.unpin(existing.sessionId);
+        if (!up || up.ok !== true) unpinError = (up && up.reason) || '解除置顶失败';
+      } else {
+        unpinError = '宿主没有 workspaceRegistry.unpinSession';
+      }
       // **已被人用过 → 先看空闲够不够久**（2026-11 主人定）：人可能还在用这条会话，
       // 立刻毕业会把它从预加载位踢走、再建一条新的——正是"每次启动新建"的另一半原因。
       const updatedAt = sessionIndex ? sessionIndex.updatedAt.get(existing.sessionId) : undefined;
@@ -482,7 +493,7 @@ async function preloadSessionInner(o = {}) {
           kept: existing.sessionId,
           created: false,
           didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used });
+        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, unpinError });
       }
       const elapsed = now - updatedAt;
       if (elapsed < idleMs) {
@@ -495,7 +506,7 @@ async function preloadSessionInner(o = {}) {
           kept: existing.sessionId,
           created: false,
           didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, elapsedMs: elapsed });
+        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, elapsedMs: elapsed, unpinError });
       }
       // **毕业**：它已经是正式会话了，不再占着 "preload" 这个位子。
       state = withManaged(state, { sessionId: existing.sessionId, role: 'active', source: existing.source });
@@ -509,7 +520,7 @@ async function preloadSessionInner(o = {}) {
           kept: existing.sessionId,
           created: false,
           didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, graduated: false });
+        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, graduated: false, unpinError });
       }
       graduatedFrom = existing.sessionId;
       keptEntry = null;
@@ -671,6 +682,19 @@ async function preloadSessionInner(o = {}) {
     }, 'create', { workspaceId, sendError: sent.reason });
   }
 
+  // ⑤ **置顶**（默认；配置可关）。pin 失败不改预加载结果，只记诊断。
+  let pinned = false;
+  let pinError;
+  if (pinPreload !== false) {
+    if (host.workspace && typeof host.workspace.pin === 'function') {
+      const p = await host.workspace.pin(sessionId);
+      pinned = p.ok === true;
+      if (!pinned) pinError = (p && p.reason) || '置顶失败';
+    } else {
+      pinError = '宿主没有 workspaceRegistry.pinSession';
+    }
+  }
+
   return finish({
     ok: true,
     reason: '建了一条预加载会话并让它真读了一次'
@@ -681,5 +705,5 @@ async function preloadSessionInner(o = {}) {
     created: true,
     didRead: true,
     readiness, // 对账日志要它：这次是过了哪条门槛才建的
-  }, 'create', { workspaceId, repaired, converged });
+  }, 'create', { workspaceId, repaired, converged, pinned, pinError });
 }

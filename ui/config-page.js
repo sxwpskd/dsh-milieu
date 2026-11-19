@@ -15,7 +15,7 @@
 //     只有保存才写入；页面自己负责草稿与校验提示。
 //
 // 本步（配置页 2/3）：**只读展示 workspaces[]**（结构性配置，不产生写操作）；
-//   即时字段 `preloadSession` / `preloadAgentPreset` / `autoState` / `criteria` 可编辑（只生成 set 操作）；
+//   即时字段 `preloadSession` / `preloadAgentPreset` / `preloadPin` / `autoState` / `criteria` 可编辑（只生成 set 操作）；
 //   不改宿主 Config 语义、不写 profile 文件、不直接碰 `milieu-state.json`。
 //
 // 纪律：纯 React（`React` 由调用方传入）、不写 DOM、不 import Harness 客户端包、
@@ -70,6 +70,7 @@ export const FIELD_GROUPS = [
     fields: [
       { path: ['preloadSession'], label: 'preloadSession（预加载会话）', kind: 'boolean' },
       { path: ['preloadAgentPreset'], label: 'preloadAgentPreset（预加载会话模式）', kind: 'select', options: PRELOAD_PRESET_OPTIONS },
+      { path: ['preloadPin'], label: 'preloadPin（预加载会话创建时置顶）', kind: 'boolean' },
       { path: ['criteria', 'preloadIdleMs'], label: 'preloadIdleMs（空闲多久算用完了）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'preloadPollMs'], label: 'preloadPollMs（对账轮询间隔）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'agentLoopWaitMs'], label: 'agentLoopWaitMs（等 agentLoop 的兜底）', kind: 'number', integer: true, min: 0 },
@@ -146,6 +147,7 @@ export const FIELD_LABELS = Object.freeze({
   'criteria.agentLoopWaitMs': '等 agentLoop 兜底（毫秒）',
   'preloadSession': '预加载会话',
   'preloadAgentPreset': '预加载会话模式',
+  'preloadPin': '预加载会话置顶',
   'autoState': '自动生成状态文件',
 });
 

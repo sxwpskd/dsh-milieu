@@ -1,5 +1,11 @@
 # 更新日志
 
+## 0.1.2-dev.2 — 未发布
+
+- **预加载会话置顶**：新增 `preloadPin`（默认开）；新建预加载后调用 `workspaceRegistry.pinSession` 置顶。
+- **使用后自动解除置顶**：检测到预加载会话被人使用（人类消息 >1）时调用 `unpinSession`；平台没置顶时是 no-op，不影响毕业/新建。
+- 配置页「预加载」组增加 `preloadPin` 开关；pin/unpin 失败只记诊断，不让预加载失败。
+
 ## 0.1.2-dev.1 — 未发布
 
 - **预加载会话模式可选**：新增 `preloadAgentPreset`，可选 `standard`（标准模式）/ `cordis`（创造模式）；空 = 跟随平台默认。只影响新建的预加载会话，已有会话保持原模式。
