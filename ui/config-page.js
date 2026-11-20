@@ -71,7 +71,7 @@ export const FIELD_GROUPS = [
       { path: ['preloadSession'], label: 'preloadSession（预加载会话）', kind: 'boolean' },
       { path: ['preloadAgentPreset'], label: 'preloadAgentPreset（预加载会话模式）', kind: 'select', options: PRELOAD_PRESET_OPTIONS },
       { path: ['preloadPin'], label: 'preloadPin（预加载会话创建时置顶）', kind: 'boolean' },
-      { path: ['criteria', 'preloadIdleMs'], label: 'preloadIdleMs（空闲多久算用完了）', kind: 'number', integer: true, min: 0 },
+      { path: ['criteria', 'preloadIdleMs'], label: 'preloadIdleMs（已弃用：预加载现在使用即失效）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'preloadPollMs'], label: 'preloadPollMs（对账轮询间隔）', kind: 'number', integer: true, min: 0 },
       { path: ['criteria', 'agentLoopWaitMs'], label: 'agentLoopWaitMs（等 agentLoop 的兜底）', kind: 'number', integer: true, min: 0 },
     ],

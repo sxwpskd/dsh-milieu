@@ -18,8 +18,8 @@
 //      现在只认 `data.source.kind === 'user'`（见 `model/session.js` 的 `isHumanMessage`）。
 //   ② 受管表里 `role === 'preload'` **允许有多条**（历史遗留 / 重复启动），老实现只认第一条，
 //      后面的永远留着 → 侧栏里冒出多条预加载会话。现在先**对账**：只留一条有效的。
-//   ③ 被人用过的会话原来立刻毕业，可那个人可能**还在用它**。现在要**空闲够久**才毕业：
-//      `now - updatedAt >= criteria.preloadIdleMs`（与弹卡阈值 `promptThresholdMs` 无关，各自独立）。
+//   ③ 被人用过的会话**第一次真人使用后立即毕业**（2026-11-20 改）：不再等 `preloadIdleMs`。
+//      人仍可继续用旧会话；新的预加载另建一条，旧会话不再占 preload 位。
 //
 // 重构后的边界（ARCHITECTURE.md §6.3）：
 //   · 宿主服务走参数传入的 `host` 能力（`adapter/dsh.js`）——**不再有 `ctx.get` 回退**，
@@ -83,10 +83,9 @@ function setManaged(state, managedSessions) {
  * 统一的返回形状（**监控日志按字段读**，不再解析 reason 文案）。
  *
  * 缺的字段用 `null` / `false` / `0`，**不用 undefined**——调用方可以无条件读。
- * `skipped` 的五个取值（语义见本文件各分支）：
+ * `skipped` 的四个取值（语义见本文件各分支）：
  *   · `readiness` —— 0 条有效预加载，但认知库还没到门槛（**有意 0，不是失败**，ok:true）
- *   · `idle`      —— 已被人用过，但还没空闲够久（不毕业、不新建）
- *   · `activity`  —— 拿不到活动时间/会话表（保守：不毕业、不新建、不删）
+ *   · `activity`  —— 拿不到会话表（保守：不毕业、不新建、不删）
  *   · `clean`     —— 已有一条有效预加载，这次不用建（可能补读了一次）
  *   · `none`      —— 没跳过（新建成功；或失败路径，无意义）
  *
@@ -290,7 +289,7 @@ async function preloadSessionInner(o = {}) {
   };
 
   /**
-   * **读会话表**（存在性 + 活动时间）——这是"恰好 1 条"对账与"空闲够久"的唯一依据。
+   * **读会话表**（存在性）——这是"恰好 1 条"对账的唯一依据；毕业不再依赖活动时间。
    *
    * 形状按能力契约：`{ok:true, value:[{id, updatedAt}]}` / `{ok:false, reason}`。
    * 再容忍一次裸数组（旧适配层的形状）——形状差异不该被当成"没有会话"（那会清掉真记录）。
@@ -318,13 +317,6 @@ async function preloadSessionInner(o = {}) {
       : (Array.isArray(listed.items) ? listed.items : []);
     const idx = sessionListIndex(rows);
     return { ok: true, ids: idx.ids, updatedAt: idx.updatedAt, meta: idx.meta };
-  };
-
-  /** 空闲阈值：**默认值只有 config/criteria.js 一处**（本层不另写一个数）。拿不到 → null（保守）。 */
-  const idleThreshold = () => {
-    if (criteria && Number.isFinite(criteria.preloadIdleMs)) return criteria.preloadIdleMs;
-    const fallback = DEFAULT_CRITERIA && DEFAULT_CRITERIA.preloadIdleMs;
-    return Number.isFinite(fallback) ? fallback : null;
   };
 
   // ------------------------------------------------------------------
@@ -503,36 +495,11 @@ async function preloadSessionInner(o = {}) {
       } else {
         unpinError = '宿主没有 workspaceRegistry.unpinSession';
       }
-      // **已被人用过 → 先看空闲够不够久**（2026-11 主人定）：人可能还在用这条会话，
-      // 立刻毕业会把它从预加载位踢走、再建一条新的——正是"每次启动新建"的另一半原因。
-      const updatedAt = sessionIndex ? sessionIndex.updatedAt.get(existing.sessionId) : undefined;
-      const idleMs = idleThreshold();
-      if (!Number.isFinite(updatedAt) || !Number.isFinite(idleMs) || idleMs <= 0) {
-        return finish({
-          ok: true,
-          reason: '预加载会话已经被用过，但拿不到'
-            + (!Number.isFinite(updatedAt) ? '它的最后活动时间' : '空闲阈值（criteria.preloadIdleMs）')
-            + '——保守：这次不毕业、不新建',
-          skipped: 'activity',
-          sessionId: existing.sessionId,
-          kept: existing.sessionId,
-          created: false,
-          didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, inspectError, unpinError });
-      }
-      const elapsed = now - updatedAt;
-      if (elapsed < idleMs) {
-        return finish({
-          ok: true,
-          reason: '预加载会话已经被用过，但距最后活动只有 ' + Math.round(elapsed / 1000)
-            + ' 秒（< ' + Math.round(idleMs / 1000) + ' 秒）——这次不毕业、不新建',
-          skipped: 'idle',
-          sessionId: existing.sessionId,
-          kept: existing.sessionId,
-          created: false,
-          didRead: false,
-        }, 'existing', { workspaceId, step, unarchive: un, humanMessages, used, elapsedMs: elapsed, inspectError, unpinError });
-      }
+      // **被人用过 → 立即毕业**（2026-11-20 主人定）：预加载的失效时机是"第一次被真人使用"，
+      // 不再等 `preloadIdleMs` 空闲。旧逻辑会让人用在用的会话继续占着 preload 位，5 分钟内
+      // 既不转 active 也不新建；这正是"没有在正确时机判断失效"的根因。
+      // 注意：人当前仍可继续用这条会话；它只是不再占预加载位，新的预加载是另一条。
+      //
       // **毕业**：它已经是正式会话了，不再占着 "preload" 这个位子。
       state = withManaged(state, { sessionId: existing.sessionId, role: 'active', source: existing.source });
       try {
