@@ -1,12 +1,12 @@
 {
   "name": "dsh-milieu",
-  "version": "1.2.1",
+  "version": "2.0.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sxwpskd/dsh-milieu.git"
   },
-  "description": "给 agent 一套环境的定义与账目：环境 = 信息 + 工具；三个库（认知 / 工具 / 外部信息）由它自己管。含协议规范框架、工作区状态预加载、定期整理。",
+  "description": "给 agent 一套环境的定义与账目：环境 = 信息 + 工具；库（认知 / 外部信息 / 日记 / 决定 / 规则 / 工具）由它自己管。2.0 起协议随包携带、按 protocolVersion 选版本并可切换。",
   "keywords": [
     "dsh-plugin",
     "dsh",
