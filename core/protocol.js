@@ -224,13 +224,16 @@ export function syncProtocol(o = {}) {
     //     把协议自带的 RULES.md **原样复制一份**当作规则库的起点（主人的口径：每个受管工作区
     //     都有 .dsh-milieu/RULES.md，直接复制它就行）。只种一次：之后那份归工作区自己，
     //     改了也不会被插件写回——所以这里不带托管头，也绝不覆盖。
+    //     唯一的改写：RULES.md 里指向同目录协议文件的相对链接（如 `RATIONALE.md`），
+    //     复制到 <rules>/ 之后要指回 `.dsh-milieu/`，否则成了死链。
     const rulesLib = libEntries.find(([key]) => key === 'rules');
     if (rulesLib && sources['RULES.md'] !== undefined) {
       const rulesDir = join(root, rulesLib[1]);
       const index = join(rulesDir, 'INDEX.md');
       if (!fs.exists(index)) {
         if (!fs.exists(rulesDir)) fs.mkdirp(rulesDir);
-        const src = sources['RULES.md'];
+        const src = sources['RULES.md']
+          .replace(/\]\(((?:DEFINITION|RULES|SUGGESTIONS|RATIONALE)\.md)\)/g, '](../.dsh-milieu/$1)');
         fs.writeText(index, /\n$/.test(src) ? src : src + '\n');
         wrote.push(rulesLib[1] + '/INDEX.md（从协议自带的 RULES.md 复制）');
         changed = true;
