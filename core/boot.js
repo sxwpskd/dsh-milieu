@@ -148,7 +148,13 @@ function syncProtocolToWorkspace(cfg, root, fs, log) {
   const wk = root ? workspaceKey(root) : null;
   try {
     if (!root) return { ok: false, reason: '没有工作区根', wrote: [], changed: false };
-    const result = syncProtocol({ root, libs: cfg.libs, ensureLibs: cfg.ensureLibs !== false, fs });
+    const result = syncProtocol({
+      root,
+      protocolVersion: cfg.protocolVersion,
+      libs: cfg.libs,
+      ensureLibs: cfg.ensureLibs !== false,
+      fs,
+    });
     if (!result.ok) {
       emit(log, 'protocol.sync.failed', '[milieu] 协议没能写进工作区：' + result.reason, {
         ok: false,
@@ -633,7 +639,7 @@ function bootInner({ host, fs, log, config, attachFileSink } = {}) {
       const ok = !(proto && proto.ok === false)
         && !(cfg.autoState && stateRun && stateRun.ok === false && !stateRun.firstBoot && !stateRun.skipped);
       emit(log, 'boot.ready',
-        '[milieu] 工作区=' + root + '（' + rootSource + '），三库=' + cfg.libs.review + '/' + cfg.libs.tools + '/' + cfg.libs.external +
+        '[milieu] 工作区=' + root + '（' + rootSource + '），库=' + Object.values(cfg.libs).filter(Boolean).join('/') +
         '，状态文件=' + cfg.statePath +
         '，协议写入工作区=' + (cfg.writeProtocol ? (proto.ok ? (proto.changed ? '已同步' : '已是最新') : '失败：' + proto.reason) : '关') +
         '，状态文件=' + (cfg.autoState

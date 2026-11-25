@@ -58,13 +58,24 @@ export const PRELOAD_PRESET_OPTIONS = Object.freeze([
 ]);
 
 /**
- * 可编辑字段（**只有 volatile 字段**：preloadSession / preloadAgentPreset / autoState / criteria 的标量）。
+ * 可编辑字段（**只有 volatile 字段**：protocolVersion / preloadSession / preloadAgentPreset / autoState / criteria 的标量）。
  * 每一项：`key`（草稿键）、`path`（mutate 的 path）、`label`、`kind`（boolean|number|select）、
  * `integer` / `min` / `max` 是本地校验（Host 仍会校验完整 Config）。
  * `select` 字段带 `options: [{ value, label }]`。
  * `workspaces` **不在这里**：它只读、永不生成写操作。
  */
+export const PROTOCOL_VERSION_OPTIONS = Object.freeze([
+  { value: '1', label: '1（1.x：三库 + 三份协议文件；默认）' },
+  { value: '2', label: '2（2.0：六库 + 四份协议文件，含规则库）' },
+]);
+
 export const FIELD_GROUPS = [
+  {
+    title: '协议',
+    fields: [
+      { path: ['protocolVersion'], label: 'protocolVersion（协议版本）', kind: 'select', options: PROTOCOL_VERSION_OPTIONS },
+    ],
+  },
   {
     title: '预加载',
     fields: [

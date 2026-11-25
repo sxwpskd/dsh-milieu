@@ -19,14 +19,25 @@ import { plainConfig } from './values.js';
  *   · `preloadSession` 默认关 = 它会真跑一次 agent（花钱、动会话列表），本机验证时才开。
  */
 export const DEFAULT_CONFIG = {
-  libs: { review: 'review', tools: 'tools', external: 'external' },
+  // 库名表（2.0 起六个；键是**语义名**，值是目录）。
+  // 协议要求的是"至少这些库"：多出来的目录不算违规，插件只补缺的、不删多的。
+  libs: {
+    review: 'review',
+    external: 'external',
+    journal: 'journal',
+    decisions: 'journal/decisions',
+    rules: 'rules',
+    tools: 'tools',
+  },
+  // 协议版本（PROTOCOL-2.0.md R-01）：'1' | '2'。**默认 '1'**——装 2.0 不改老工作区。
+  protocolVersion: '1',
   statePath: 'STATE.md',
   injectState: true,
   injectBudgetKiB: 128,
   // 把协议写进工作区（AGENTS.md 托管段 + `.dsh-milieu/` 三份文件）。**默认开**。
   // 这是"让后续 AI 看得到协议"那一条的实现；写失败只报告，不兜底。
   writeProtocol: true,
-  // 检查三个库在不在，**不在就补全目录**（需求 R3）。默认开。**只建目录，不铺内容**。
+  // 检查库目录在不在，**不在就补全目录**（需求 R3 / R-05）。默认开。**只建目录，不铺内容**。
   ensureLibs: true,
   // **预加载会话**（需求 R4 / M5）：工作区没有我们的预加载会话就建一条，并让它真读一次。
   // **默认关**：它要建 agent、会真跑一次任务（花钱、动会话列表）。

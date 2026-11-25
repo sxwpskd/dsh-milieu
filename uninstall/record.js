@@ -7,15 +7,16 @@
 //
 // 只记录插件自己声明的路径；用户文件不记、不撤。分类规则见 `classify()`。
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { PROTOCOL_FILES } from '../constant/protocol.js';
-import { beginMark } from '../protocol/version.js';
-import { PROTO_VERSION } from '../constant/protocol.js';
+import { PROTOCOL_VERSION_IDS, protocolFiles } from '../constant/protocol.js';
 import { JUDGEMENT_MARK } from '../core/state-page.js';
 
-const BEGIN_MARK = beginMark({ version: PROTO_VERSION });
+/** 托管段的定位提示：**任何版本**都算（切版本后工作区里可能是另一版）。 */
+const BEGIN_HINT = /<!--\s*dsh-milieu:begin\s+v\d+/;
 
-/** 协议文件名（工作区 `.dsh-milieu/` 下）。 */
-const PROTOCOL_NAMES = new Set(PROTOCOL_FILES.map(([, name]) => name));
+/** 协议文件名（工作区 `.dsh-milieu/` 下）——所有版本用到的名字的并集。 */
+const PROTOCOL_NAMES = new Set(
+  PROTOCOL_VERSION_IDS.flatMap((v) => protocolFiles(v).map(([, name]) => name)),
+);
 
 function relOf(root, path) {
   if (typeof path !== 'string' || !path) return null;
@@ -32,17 +33,17 @@ function relOf(root, path) {
  * @param {{libs:object, statePath:string}} ctx
  */
 export function classify(rel, ctx = {}) {
-  const libs = ctx.libs || { review: 'review', tools: 'tools', external: 'external' };
+  const libs = ctx.libs || { review: 'review', external: 'external', journal: 'journal', decisions: 'journal/decisions', rules: 'rules', tools: 'tools' };
   const statePath = ctx.statePath || 'STATE.md';
-  const definition = '.dsh-milieu/DEFINITION.md';
   if (rel === 'AGENTS.md') return { owner: 'plugin', strategy: 'managed-block' };
-  if (rel === definition || rel === '.dsh-milieu/SUGGESTIONS.md' || rel === '.dsh-milieu/RATIONALE.md') {
+  if (rel.startsWith('.dsh-milieu/') && PROTOCOL_NAMES.has(rel.slice('.dsh-milieu/'.length))) {
     return { owner: 'protocol', strategy: 'full' };
   }
   if (rel === libs.review + '/' + statePath) return { owner: 'plugin', strategy: 'state-material' };
   if (rel === libs.review + '/milieu-state.json') return { owner: 'plugin', strategy: 'remove' };
   if (rel === libs.tools + '/.milieu-state-prev.json') return { owner: 'plugin', strategy: 'remove' };
-  if (rel === '.dsh-milieu' || rel === libs.review || rel === libs.tools || rel === libs.external) {
+  const libValues = Object.values(libs).filter((v) => typeof v === 'string' && v);
+  if (rel === '.dsh-milieu' || libValues.includes(rel)) {
     return { owner: 'plugin', strategy: 'dir' };
   }
   if (rel.startsWith('.dsh-milieu/')) return { owner: 'plugin', strategy: 'remove' };
@@ -150,7 +151,7 @@ export function seedKnownArtifacts({ ledger, fs, root, libs, statePath } = {}) {
 
   const agents = join(base, 'AGENTS.md');
   try {
-    if (fs.exists(agents) && fs.readText(agents).includes(BEGIN_MARK)) {
+    if (fs.exists(agents) && BEGIN_HINT.test(fs.readText(agents))) {
       add('AGENTS.md', { owner: 'plugin', strategy: 'managed-block' });
     }
   } catch { /* 读不到就不认领 */ }

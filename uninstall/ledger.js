@@ -15,8 +15,8 @@
 //
 // 撤回：**默认 dryRun**；--all 才连协议文件一起撤。幂等：成功后删台账，再跑就是“没有台账”。
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { beginMark } from '../protocol/version.js';
-import { END, PROTO_VERSION } from '../constant/protocol.js';
+import { findBlocks } from '../protocol/version.js';
+import { END } from '../constant/protocol.js';
 import { JUDGEMENT_MARK } from '../core/state-page.js';
 
 export const LEDGER_VERSION = 1;
@@ -25,7 +25,7 @@ export const OWNERS = ['plugin', 'protocol', 'user'];
 export const KINDS = ['created', 'modified', 'removed'];
 export const STRATEGIES = ['full', 'remove', 'managed-block', 'state-material', 'dir'];
 
-const BEGIN_MARK = beginMark({ version: PROTO_VERSION });
+const BEGIN_HINT = /<!--\s*dsh-milieu:begin\s+v\d+/;
 
 /** 把绝对路径归一成相对工作区根的 `/` 路径；越界/根自身返回 null。 */
 export function toRel(root, path) {
@@ -51,10 +51,12 @@ export function resolveInside(root, rel) {
 /** 删掉文本里的托管段（只认完整标记；段外保留）。 */
 export function withoutManagedBlock(text) {
   const source = String(text ?? '');
-  const begin = source.indexOf(BEGIN_MARK);
+  // **任何版本**的托管段都要能撤（切版本后工作区里躺着的是别的版本的段）。
+  const [first] = findBlocks(source);
+  const begin = first ? first.start : source.search(BEGIN_HINT);
   if (begin < 0) return { text: source, changed: false };
-  const endAt = source.indexOf(END, begin);
-  const after = endAt < 0 ? begin : endAt + END.length;
+  const endAt = first ? first.end : source.indexOf(END, begin);
+  const after = endAt < 0 ? begin : (first ? first.end : endAt + END.length);
   let next = source.slice(0, begin) + source.slice(after);
   next = next.replace(/\s*$/, '');
   if (next) next += '\n';

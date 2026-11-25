@@ -195,7 +195,7 @@ export function generateState(o = {}) {
     keepCount: criteria.eventKeepCount,
     recursiveLibs: (changes.recursiveLibs || [libs.review]).map(String),
   };
-  const libPaths = { review: libs.review, tools: libs.tools, external: libs.external };
+  const libPaths = { ...libs };
   const statePath = join(root, libs.review, STATE_FILE);
   const prevPath = join(root, libs.tools, PREV_FILE);
 

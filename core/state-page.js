@@ -54,9 +54,14 @@ export function buildMaterial({ root, libs, state, now = Date.now(), fs }) {
   lines.push('');
   lines.push('- 变更账生成于：' + generated + '　根目录：`' + root + '`'
     + (facts && facts.count !== null ? '，共 **' + facts.count + '** 个文件' : ''));
-  lines.push('- 三库：认知库 `' + libs.review + '/` ' + libOk(libs.review)
-    + '　工具区 `' + libs.tools + '/` ' + libOk(libs.tools)
-    + '　外部信息区 `' + libs.external + '/` ' + libOk(libs.external));
+  lines.push('- 库：' + [
+    ['认知库', libs.review],
+    ['工具区', libs.tools],
+    ['外部信息区', libs.external],
+    ['日记库', libs.journal],
+    ['决定库', libs.decisions],
+    ['规则库', libs.rules],
+  ].filter(([, rel]) => rel).map(([what, rel]) => what + ' `' + rel + '/` ' + libOk(rel)).join('　'));
   lines.push('- 变更账：事件 **' + events.length + '** 条（新增 ' + (counts.added || 0)
     + ' / 改动 ' + (counts.changed || 0) + ' / 消失 ' + (counts.gone || 0)
     + '）' + (state && state.archived ? '，更早归档 ' + state.archived + ' 条' : ''));

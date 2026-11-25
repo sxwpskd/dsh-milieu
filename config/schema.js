@@ -6,7 +6,8 @@
 //   · 本文件是**默认值的消费者**：所有默认值都从 `config/defaults.js` / `config/criteria.js` 取，
 //     不在这里重新写一份数字（"同一件事两个版本"是本工作区最怕的错）。
 //
-// Volatile（即时字段）标 6 个（SETTINGS-UI-PLAN §2 / task-12）：
+// Volatile（即时字段）标 7 个（SETTINGS-UI-PLAN §2 / task-12 / 2.0 R-01）：
+//   · `protocolVersion` —— 切换协议版本必须**即时生效**（2.0 起允许使用中切换，见 PROTOCOL-2.0.md R-01）；
 //   · `preloadSession` / `preloadAgentPreset` / `preloadPin` / `autoState` / `criteria` —— 保存后可以即时生效；
 //   · `workspaces` —— 第 1 步**只读展示**用；标记 volatile 让 Loader 在只改它时也能触发
 //     `loader/volatile-update`（页面先不提供写控件，后续任务再决定结构性编辑走哪条路）。
@@ -19,15 +20,18 @@ import { DEFAULT_CONFIG } from './defaults.js';
 import { DEFAULT_CRITERIA } from './criteria.js';
 
 // ---------------------------------------------------------------------------
-// libs：三个库的名字
+// libs：库名表（2.0 起六个）
 //   · 顶层：带默认值（缺省 = 约定名）；
 //   · workspaces 项里的覆盖是**原样透传**的（见 workspaceItem 注释：避免对象/数组 schema
 //     把"缺省"物化成 {} / []，把那项覆盖变成"把顶层值清空"）。
 // ---------------------------------------------------------------------------
 const libsDefaults = Schema.object({
   review: Schema.string().default(DEFAULT_CONFIG.libs.review),
-  tools: Schema.string().default(DEFAULT_CONFIG.libs.tools),
   external: Schema.string().default(DEFAULT_CONFIG.libs.external),
+  journal: Schema.string().default(DEFAULT_CONFIG.libs.journal),
+  decisions: Schema.string().default(DEFAULT_CONFIG.libs.decisions),
+  rules: Schema.string().default(DEFAULT_CONFIG.libs.rules),
+  tools: Schema.string().default(DEFAULT_CONFIG.libs.tools),
 });
 
 const readinessDefaults = Schema.object({
@@ -92,6 +96,8 @@ export const Config = Schema.object({
   ensureLibs: Schema.boolean().default(DEFAULT_CONFIG.ensureLibs),
 
   // ---- 即时字段（Volatile） ----
+  // 协议版本：切版本不需要重装/重启宿主，下一次同步就按新版本写（PROTOCOL-2.0.md R-01）。
+  protocolVersion: Schema.union([Schema.const('1'), Schema.const('2')]).default(DEFAULT_CONFIG.protocolVersion).volatile(),
   preloadSession: Schema.boolean().default(DEFAULT_CONFIG.preloadSession).volatile(),
   preloadAgentPreset: Schema.string().default(DEFAULT_CONFIG.preloadAgentPreset).volatile(),
   preloadPin: Schema.boolean().default(DEFAULT_CONFIG.preloadPin).volatile(),
@@ -105,4 +111,4 @@ export const Config = Schema.object({
 });
 
 /** 列出即时字段名（启动器/测试用；与上面 `.volatile()` 的字段保持一致）。 */
-export const VOLATILE_FIELDS = Object.freeze(['preloadSession', 'preloadAgentPreset', 'preloadPin', 'autoState', 'criteria', 'workspaces']);
+export const VOLATILE_FIELDS = Object.freeze(['protocolVersion', 'preloadSession', 'preloadAgentPreset', 'preloadPin', 'autoState', 'criteria', 'workspaces']);

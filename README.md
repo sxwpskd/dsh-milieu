@@ -18,14 +18,16 @@
 
 装好之后，每次会话开场它会做四件事：
 
-1. **补全三个库**（`review/` `tools/` `external/`）：缺就建目录，**只建目录，不铺内容**；
-2. **把协议写进工作区**：`AGENTS.md` 里只加一个托管段（`<!-- dsh-milieu:begin … -->` … `<!-- dsh-milieu:end -->`），段外一字不动；同时写 `.dsh-milieu/` 三份文件（定义 / 建议 / 原因）；
+1. **补全库目录**（`review/` `tools/` `external/` `journal/` `journal/decisions/` `rules/`）：缺就建目录，**只建目录，不铺内容**（协议要求的是**至少**这些库；多出来的目录一律不动）；
+2. **把协议写进工作区**：`AGENTS.md` 里只加一个托管段（`<!-- dsh-milieu:begin … -->` … `<!-- dsh-milieu:end -->`），段外一字不动；同时写 `.dsh-milieu/` 四份文件（定义 / 规则 / 建议 / 原因）。写哪一版由配置 `protocolVersion` 决定（默认 `1`；`2` 为六库 + 四份文件，含规则入口）；
 3. **生成状态文件**：扫一遍工作区，记下"变了什么"（事件流），客户端据此判断该不该提醒重读；**挂载期间持续跟踪**（每轮结束 / 每 `workspacePollMs` 扫一次），只有出现新事件才重写状态文件并往 `.dsh-milieu/changes.jsonl` 追加原始日志，**没有变化不写盘、不写日志**；
-4. **注入一页状态**（`review/STATE.md`）：上半是 agent 写的判断，下半是机器扫出的材料（变更账 / 三个库 / 最近改动 / 受管会话）。首装没有这一页时，先建一个只带判断段标记的骨架。
+4. **注入一页状态**（`review/STATE.md`）：上半是 agent 写的判断，下半是机器扫出的材料（变更账 / 库清单 / 最近改动 / 受管会话）。首装没有这一页时，先建一个只带判断段标记的骨架。
 
 **为什么写文件，而不是注入提示词？**
 因为用户可能**自己**建会话——那条会话不归我们管，注入不进去；但它同样需要知道协议。
 **写进工作区文件，任何读这个工作区的 AI 都看得见。** 同一份定义只此一处，避免"两个版本"。
+
+**切版本**：`protocolVersion` 是即时字段，改完立刻整份替换（`AGENTS.md` 的托管段从 v1 段**迁移**成 v2 段，不追加第二段；`.dsh-milieu/` 四份整套换）。切回 `1` 同样即时，且逐字还原；v2 以来新增的库与文件**不删**（"多增少删"）。
 
 ### 2. 预加载会话，维护"会话的认知"
 
@@ -43,7 +45,7 @@
 
 ```
 安装 → 打开工作区
-  ├─ 会话开场：补三库 → 写协议 → 生成状态文件 → 注入状态页
+  ├─ 会话开场：补库 → 写协议（按 protocolVersion） → 生成状态文件 → 注入状态页
   ├─ 挂载期间：每轮结束 / 每 60 秒 → 扫工作区（有新事件才写状态文件 + 原始日志；无变化不写）
   ├─ 挂载期间：每轮结束 / 每 60 秒 → 对账预加载会话（建新 / 毕业 / 补读 / 恰好一条）
   ├─ 切进会话：读状态文件 → 五关判据 → （工作区变了就）弹卡片
@@ -98,8 +100,8 @@ DSH 页面右下角有一个 **⚙ 浮球**：点开只读面板，显示 `milie
 只碰这四处：
 
 - `AGENTS.md`：**只维护**托管段（`<!-- dsh-milieu:begin … -->` 到 `<!-- dsh-milieu:end -->` 之间）；段外一个字不动；
-- `.dsh-milieu/`：协议三份（DEFINITION / SUGGESTIONS / RATIONALE）+ `preload.json` 诊断 + `milieu.log` 日志（及 `.log.1` / `.log.2` 轮转）+ `changes.jsonl` 原始变更日志（只追加）+ `side-effects.json` 卸载台账；
-- 三个库目录（`review/` `tools/` `external/`）：**缺就建目录，不铺内容**；
+- `.dsh-milieu/`：协议四份（DEFINITION / RULES / SUGGESTIONS / RATIONALE，版本由 `protocolVersion` 决定）+ `preload.json` 诊断 + `milieu.log` 日志（及 `.log.1` / `.log.2` 轮转）+ `changes.jsonl` 原始变更日志（只追加）+ `side-effects.json` 卸载台账；
+- 库目录（`review/` `tools/` `external/` `journal/` `journal/decisions/` `rules/`）：**缺就建目录，不铺内容**，多出来的目录不动；
 - 认知库里的 `STATE.md`：缺就建**状态页骨架**；只重写 `<!-- judgement -->` 以下的材料段。
 
 ## 卸载（先撤回，再卸插件）
@@ -117,7 +119,7 @@ node <包目录>\uninstall\withdraw.mjs --root <工作区> --apply
 node <包目录>\uninstall\withdraw.mjs --root <工作区> --apply --all
 ```
 
-默认**保留协议三件**（`.dsh-milieu/DEFINITION/SUGGESTIONS/RATIONALE`）和 `AGENTS.md` 段外内容；`STATE.md` 只撤材料段，判断段保留。细节见 [uninstall/README.md](uninstall/README.md)。
+默认**保留协议四件**（`.dsh-milieu/DEFINITION/RULES/SUGGESTIONS/RATIONALE`，任意版本都认）和 `AGENTS.md` 段外内容；`STATE.md` 只撤材料段，判断段保留。细节见 [uninstall/README.md](uninstall/README.md)。
 
 > **宿主 profile 的配置行 / `node_modules` junction 不归插件撤**：那是 DSH 插件管理器的卸载行为，插件代码在卸载后已不存在。需要时由宿主或用户清掉。
 
@@ -132,7 +134,8 @@ node <包目录>\uninstall\withdraw.mjs --root <工作区> --apply --all
 | `preloadSession` | `false` | 要不要保证一条**已经读过**的预加载会话。默认关：它会真跑一次 agent。打开后是持续对账（轮次事件 + 低频定时），不是启动时算一次 |
 | `preloadAgentPreset` | `''` | 新建预加载会话用哪个 DSH agent preset：空 = 跟随平台默认；`standard` = 标准模式；`cordis` = 创造模式。只影响新建的那条，已有会话保持原模式 |
 | `preloadPin` | `true` | 新建预加载会话时 pin 到**它所属工作区**的侧栏顶部；检测到被人使用后自动 unpin（没置顶则 no-op） |
-| `libs.review` / `libs.tools` / `libs.external` | `review` / `tools` / `external` | 三个库的目录名 |
+| `protocolVersion` | `'1'` | 协议版本（`'1'` 或 `'2'`）。即时生效：改完整份替换 `AGENTS.md` 托管段与 `.dsh-milieu/` 四份文件；切回 `'1'` 逐字还原，多出来的库与文件不删 |
+| `libs.review` / `libs.tools` / `libs.external` / `libs.journal` / `libs.decisions` / `libs.rules` | `review` / `tools` / `external` / `journal` / `journal/decisions` / `rules` | 六个库的目录名（**至少**这些：多出来的目录不算违规；缺了才补） |
 | `statePath` | `STATE.md` | 状态页在认知库里的相对路径 |
 | `injectState` / `injectBudgetKiB` | `true` / `128` | 要不要注入状态页；注入预算（KiB），超了跳过、不截断 |
 | `writeProtocol` / `ensureLibs` | `true` / `true` | 要不要写协议；要不要补库目录 |
@@ -270,7 +273,7 @@ sessionController.prompt({ sessionId, content })       // ⑤ 真读一次（平
 
 **为什么跨会话需要它？** DSH 的每个会话都是一个"没有记忆"的 AI。没有协议时，每个会话都会重新发明一套"这个工作区怎么管"；命名、目录、哪些能改，每次都不一样。把协议写进工作区文件（`AGENTS.md` 托管段 + `.dsh-milieu/`），**任何读这个工作区的 AI 都看得见**，包括你自己建的、插件不注入的会话。认知才会累积，而不是每次归零。
 
-完整定义见 [protocol/DEFINITION.md](protocol/DEFINITION.md)；建议层 / 原因层见 [protocol/SUGGESTIONS.md](protocol/SUGGESTIONS.md) / [protocol/RATIONALE.md](protocol/RATIONALE.md)。
+完整定义见 [protocol/1.0/DEFINITION.md](protocol/1.0/DEFINITION.md)（1.x）与 [protocol/2.0/DEFINITION.md](protocol/2.0/DEFINITION.md)（2.0）；规则见各自的 [RULES.md](protocol/2.0/RULES.md)，做法 / 原因见各自目录下的 `SUGGESTIONS.md` / `RATIONALE.md`。**协议 2.0 仍在定稿中**（工作区草稿：`plugin/协议/工作区管理协议-情景协议/2.0/`），需求与验收见 [../PROTOCOL-2.0.md](../PROTOCOL-2.0.md)。
 
 **不装插件也可以用这套协议。** 如果你在写别的插件或工作流，欢迎直接采用；觉得哪里不对，欢迎来改——协议是活的约定，不是刻在石头上的。
 

@@ -31,8 +31,8 @@ export const KINDS = ['created', 'changed', 'gone'];
 export const CHANGE_DEFAULTS = {
   keepDays: DEFAULT_CRITERIA.eventKeepDays,
   keepCount: DEFAULT_CRITERIA.eventKeepCount,
-  recursiveLibs: ['review'],
-  indexFiles: ['tools/manifest.md', 'external/retired/INDEX.md'],
+  recursiveLibs: ['review', 'rules'],
+  indexFiles: ['tools/manifest.md', 'external/retired/INDEX.md', 'journal/INDEX.md', 'journal/decisions/INDEX.md', 'rules/INDEX.md'],
   aggregateOnly: ['external/refs'],
 };
 
@@ -112,7 +112,7 @@ export function buildEntries(o = {}) {
   const c = { ...CHANGE_DEFAULTS, ...cfg };
   const out = {};
 
-  const firstLevelLibs = ['tools', 'external'].filter((k) => libs[k]);
+  const firstLevelLibs = ['tools', 'external', 'journal'].filter((k) => libs[k]);
   const recursive = c.recursiveLibs;
 
   for (const f of files) {
