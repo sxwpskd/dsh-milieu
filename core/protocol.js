@@ -35,6 +35,9 @@ import { DEFAULT_CONFIG } from '../config/defaults.js';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_DIR = resolve(HERE, '..');
 
+/** 1.x 的库只有三个（2.0 才要求六个）。用"版本决定至少哪些库"实现 R-09：装 2.0 不升版本，老工作区一个目录都不多。 */
+const LIB_KEYS_V1 = ['review', 'external', 'tools'];
+
 /** 托管段正文里那句"规则在哪"（2.0 才写；v1 的段保持逐字不变，见 R-09）。 */
 const RULES_POINTER = '**规则**：协议自带的一条见 `.dsh-milieu/RULES.md`；'
   + '本工作区当前生效的规则见 `rules/INDEX.md`（规则库是当前行动约束的唯一来源）。';
@@ -185,8 +188,12 @@ export function syncProtocol(o = {}) {
   try {
     // ① 库目录（**只建目录，不铺任何东西**）——需求 R3："检查是否遵守协议，不出现就补全"
     //    2.0：库从三个扩到六个；**只补缺的**，多出来的目录一律不动（"至少"语义）。
+    //    版本决定"至少哪些库"：1.x 只要三个，2.0 才要六个——所以装 2.0 但没升版本时，
+    //    老工作区一个目录都不多（R-09：默认什么都不变）。
+    const libEntries = Object.entries(libs || {}).filter(([key, name]) => name
+      && (String(version) === '1' ? LIB_KEYS_V1.includes(key) : true));
     if (ensureLibs) {
-      for (const [key, name] of Object.entries(libs || {})) {
+      for (const [key, name] of libEntries) {
         if (!name) continue;
         const abs = join(root, name);
         if (fs.exists(abs)) continue;
@@ -211,6 +218,23 @@ export function syncProtocol(o = {}) {
       fs.writeText(target, want);
       wrote.push('.dsh-milieu/' + name);
       changed = true;
+    }
+
+    // ②b 规则库索引：2.0 才有规则库。工作区里没有 <rules>/INDEX.md 时，
+    //     把协议自带的 RULES.md **原样复制一份**当作规则库的起点（主人的口径：每个受管工作区
+    //     都有 .dsh-milieu/RULES.md，直接复制它就行）。只种一次：之后那份归工作区自己，
+    //     改了也不会被插件写回——所以这里不带托管头，也绝不覆盖。
+    const rulesLib = libEntries.find(([key]) => key === 'rules');
+    if (rulesLib && sources['RULES.md'] !== undefined) {
+      const rulesDir = join(root, rulesLib[1]);
+      const index = join(rulesDir, 'INDEX.md');
+      if (!fs.exists(index)) {
+        if (!fs.exists(rulesDir)) fs.mkdirp(rulesDir);
+        const src = sources['RULES.md'];
+        fs.writeText(index, /\n$/.test(src) ? src : src + '\n');
+        wrote.push(rulesLib[1] + '/INDEX.md（从协议自带的 RULES.md 复制）');
+        changed = true;
+      }
     }
 
     // ③ AGENTS.md 的托管段（任何版本的旧段都会被整段替换，不追加第二段）
